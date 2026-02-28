@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import CashFlow, DailyPortfolio
+from app.models import CashFlow, DailyMetrics, DailyPortfolio
 from app.schemas import PortfolioSummary
 from app.services.date_filters import resolve_date_range
 from app.services.metrics import compute_all_metrics, compute_performance_series
@@ -194,24 +194,177 @@ def get_portfolio_performance_data(
     start_date: Optional[str],
     end_date: Optional[str],
 ) -> List[Dict]:
-    """Load performance chart series recomputed from the selected date range."""
+    """Load performance chart series (single-account pass-through or multi-account aggregate)."""
+    query = db.query(DailyPortfolio, DailyMetrics).outerjoin(
+        DailyMetrics,
+        (DailyPortfolio.date == DailyMetrics.date) & (DailyPortfolio.account_id == DailyMetrics.account_id),
+    ).filter(
+        DailyPortfolio.account_id.in_(account_ids)
+    ).order_by(DailyPortfolio.date)
+
     date_start, date_end = resolve_date_range(period, start_date, end_date)
-    try:
-        daily_series, _, _ = load_aggregated_daily_series(
+    if date_start:
+        query = query.filter(DailyPortfolio.date >= date_start)
+    if date_end:
+        query = query.filter(DailyPortfolio.date <= date_end)
+    results = query.all()
+
+    if len(account_ids) == 1:
+        if not results:
+            return []
+
+        daily_series = [
+            {
+                "date": str(p.date),
+                "portfolio_value": p.portfolio_value,
+                "net_deposits": p.net_deposits,
+            }
+            for p, _ in results
+        ]
+        cf_dicts = load_cash_flow_events(
             db=db,
             account_ids=account_ids,
             date_start=date_start,
             date_end=date_end,
         )
-    except HTTPException as exc:
-        if exc.status_code == 404:
-            return []
-        raise
 
+        # Any missing metric row can produce zero-filled points; recompute to preserve correctness.
+        if any(m is None for _, m in results):
+            return compute_performance_series(daily_series, cf_dicts)
+
+        points = [
+            {
+                "date": str(p.date),
+                "portfolio_value": p.portfolio_value,
+                "net_deposits": p.net_deposits,
+                "cumulative_return_pct": m.cumulative_return_pct,
+                "daily_return_pct": m.daily_return_pct,
+                "time_weighted_return": m.time_weighted_return,
+                "money_weighted_return": getattr(
+                    m, "money_weighted_return_period", m.money_weighted_return
+                ),
+                "current_drawdown": m.current_drawdown,
+            }
+            for p, m in results
+        ]
+        rebased = _rebase_performance_window(points)
+        return _overlay_window_mwr(rebased, daily_series, cf_dicts)
+
+    if not results:
+        return []
+
+    zeros = {"portfolio_value": 0.0, "net_deposits": 0.0}
+
+    per_account: dict[str, dict[str, dict]] = defaultdict(dict)
+    for p, _ in results:
+        ds = str(p.date)
+        per_account[p.account_id][ds] = {
+            "portfolio_value": p.portfolio_value,
+            "net_deposits": p.net_deposits,
+        }
+
+    all_dates = sorted({ds for account in per_account.values() for ds in account})
+
+    aggregated: List[Dict] = []
+    aggregated_daily_rows: List[Dict] = []
+    last_known: dict[str, dict] = {aid: dict(zeros) for aid in per_account}
+    prev_pv = None
+    prev_nd = None
+    peak_pv = 0.0
+    twr_cum = 1.0
+
+    for ds in all_dates:
+        sum_pv = 0.0
+        sum_nd = 0.0
+        for aid in per_account:
+            if ds in per_account[aid]:
+                last_known[aid] = per_account[aid][ds]
+            sum_pv += last_known[aid]["portfolio_value"]
+            sum_nd += last_known[aid]["net_deposits"]
+
+        cum_ret = ((sum_pv - sum_nd) / sum_nd * 100) if sum_nd else 0
+        if prev_pv is not None and prev_pv > 0:
+            cf_today = sum_nd - (prev_nd or 0)
+            daily_ret = (sum_pv - prev_pv - cf_today) / prev_pv * 100
+        else:
+            daily_ret = 0
+
+        twr_cum *= (1 + daily_ret / 100)
+        twr = (twr_cum - 1) * 100
+
+        peak_pv = max(peak_pv, twr_cum)
+        drawdown = ((twr_cum / peak_pv - 1) * 100) if peak_pv > 0 else 0
+
+        aggregated.append(
+            {
+                "date": ds,
+                "portfolio_value": sum_pv,
+                "net_deposits": sum_nd,
+                "cumulative_return_pct": round(cum_ret, 4),
+                "daily_return_pct": round(daily_ret, 4),
+                "time_weighted_return": round(twr, 4),
+                "money_weighted_return": 0.0,
+                "current_drawdown": round(drawdown, 4),
+            }
+        )
+        aggregated_daily_rows.append(
+            {
+                "date": ds,
+                "portfolio_value": sum_pv,
+                "net_deposits": sum_nd,
+            }
+        )
+        prev_pv = sum_pv
+        prev_nd = sum_nd
+
+    rebased = _rebase_performance_window(aggregated)
     cf_dicts = load_cash_flow_events(
         db=db,
         account_ids=account_ids,
         date_start=date_start,
         date_end=date_end,
     )
-    return compute_performance_series(daily_series, cf_dicts)
+    return _overlay_window_mwr(rebased, aggregated_daily_rows, cf_dicts)
+
+
+def _rebase_performance_window(points: List[Dict]) -> List[Dict]:
+    """Normalize TWR and drawdown to the first visible point in the window."""
+    if not points:
+        return points
+
+    first_twr = float(points[0].get("time_weighted_return") or 0)
+    twr_base = 1 + first_twr / 100
+
+    peak_growth = 1.0
+    rebased: List[Dict] = []
+    for idx, point in enumerate(points):
+        next_point = dict(point)
+        twr = float(next_point.get("time_weighted_return") or 0)
+        rebased_twr = ((1 + twr / 100) / twr_base - 1) * 100 if twr_base != 0 else twr
+        growth = 1 + rebased_twr / 100
+        peak_growth = max(peak_growth, growth)
+        rebased_drawdown = (growth / peak_growth - 1) * 100 if peak_growth > 0 else 0
+
+        if idx == 0:
+            next_point["daily_return_pct"] = 0.0
+
+        next_point["time_weighted_return"] = round(rebased_twr, 4)
+        next_point["current_drawdown"] = round(rebased_drawdown, 4)
+        rebased.append(next_point)
+
+    return rebased
+
+
+def _overlay_window_mwr(points: List[Dict], daily_series: List[Dict], cf_dicts: List[Dict]) -> List[Dict]:
+    """Replace MWR values with in-window IRR recomputation from cash flows."""
+    if not points:
+        return points
+
+    recomputed = compute_performance_series(daily_series, cf_dicts)
+    with_mwr: List[Dict] = []
+    for idx, point in enumerate(points):
+        next_point = dict(point)
+        if idx < len(recomputed):
+            next_point["money_weighted_return"] = recomputed[idx].get("money_weighted_return", 0.0)
+        with_mwr.append(next_point)
+    return with_mwr
