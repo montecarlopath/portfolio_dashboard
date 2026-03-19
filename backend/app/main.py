@@ -7,6 +7,9 @@ import time
 from contextlib import asynccontextmanager
 
 import httpx
+# Add after the imports (around line 10):
+_INTERNAL_API_BASE = os.environ.get("INTERNAL_API_URL", f"{_INTERNAL_API_BASE}")
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -105,7 +108,7 @@ async def _run_monitor():
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "http://localhost:8000/api/hedge/orders/monitor",
+                f"{_INTERNAL_API_BASE}/hedge/orders/monitor",
                 params={"reprice": "false"},
                 timeout=60,
             )
@@ -124,7 +127,7 @@ async def _run_monitor():
             logger.info("Fills detected → post-fill reconciliation: %s", filled_ids)
             async with httpx.AsyncClient() as client:
                 recon_resp = await client.post(
-                    "http://localhost:8000/api/hedge/reconcile/post-fill",
+                    f"{_INTERNAL_API_BASE}/hedge/reconcile/post-fill",
                     timeout=60,
                 )
             recon = recon_resp.json()
@@ -141,7 +144,7 @@ async def _cancel_all_open_hedge_orders():
     try:
         async with httpx.AsyncClient() as client:
             open_resp = await client.get(
-                "http://localhost:8000/api/hedge/orders/open",
+                f"{_INTERNAL_API_BASE}/hedge/orders/open",
                 timeout=30,
             )
             open_orders = open_resp.json().get("orders", [])
@@ -151,7 +154,7 @@ async def _cancel_all_open_hedge_orders():
             if broker_order_id:
                 async with httpx.AsyncClient() as client:
                     await client.post(
-                        "http://localhost:8000/api/hedge/orders/cancel",
+                        f"{_INTERNAL_API_BASE}/hedge/orders/cancel",
                         params={"broker_order_id": broker_order_id},
                         timeout=30,
                     )
@@ -203,7 +206,7 @@ async def _run_eod_submission():
         # ── Check hedge gap ───────────────────────────────────────────────────
         async with httpx.AsyncClient() as client:
             intel_resp = await client.post(
-                "http://localhost:8000/api/hedge/reconcile/post-fill",
+                f"{_INTERNAL_API_BASE}/hedge/reconcile/post-fill",
                 timeout=60,
             )
             intel = intel_resp.json()
@@ -230,10 +233,52 @@ async def _run_eod_submission():
             gap_pct * 100, budget, attempt,
         )
 
+        # ── Check for exit tickets FIRST ──────────────────────────────────────
+        # Before adding new hedges, check if any existing positions should be
+        # closed (profit-take, regime exit, decay). Exit first, then fill gap.
+        try:
+            async with httpx.AsyncClient() as client:
+                tickets_resp = await client.get(
+                    f"{_INTERNAL_API_BASE}/hedge/tickets",
+                    params={"account_id": "all", "mode": "preview"},
+                    timeout=60,
+                )
+                all_tickets = tickets_resp.json().get("tickets", [])
+
+                close_actions = {"close_profit_take", "close_regime_exit", "close_decay"}
+                from app.schemas import HedgeTradeTicket
+
+                # Convert dicts to objects for execute_close_tickets
+                class _TicketProxy:
+                    def __init__(self, d):
+                        for k, v in d.items():
+                            setattr(self, k, v)
+
+                close_ticket_objs = [
+                    _TicketProxy(t) for t in all_tickets
+                    if t.get("action") in close_actions
+                ]
+
+                if close_ticket_objs:
+                    close_results = execute_close_tickets(
+                        tickets=close_ticket_objs,
+                        mode="submit",
+                        use_bid=final,  # use bid on final attempt
+                    )
+                    submitted_closes = [r for r in close_results if r.get("submitted")]
+                    if submitted_closes:
+                        logger.info(
+                            "EOD: closed %d position(s): %s",
+                            len(submitted_closes),
+                            [r["symbol"] for r in submitted_closes],
+                        )
+        except Exception as e:
+            logger.warning("EOD: close ticket execution failed: %s", e)
+
         # ── Get spread selection with fresh bid/ask ───────────────────────────
         async with httpx.AsyncClient() as client:
             select_resp = await client.get(
-                "http://localhost:8000/api/hedge/select",
+                f"{_INTERNAL_API_BASE}/hedge/select",
                 params={"account_id": "all"},
                 timeout=60,
             )
@@ -319,7 +364,7 @@ async def _run_eod_submission():
  
             async with httpx.AsyncClient() as client:
                 submit_resp = await client.get(
-                    "http://localhost:8000/api/hedge/orders",
+                    f"{_INTERNAL_API_BASE}/hedge/orders",
                     params={
                         "account_id": "all",
                         "mode": "submit",
