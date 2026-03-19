@@ -7,7 +7,7 @@ __pycache__
 .env.*
 data/
 *.db
-*.json
+broker_submission_log.json
 .git
 .gitignore
 README*
