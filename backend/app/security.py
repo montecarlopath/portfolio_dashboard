@@ -133,6 +133,9 @@ def _enforce_local_network_boundary(
     client_host: Optional[str],
     websocket: bool = False,
 ) -> None:
+    # Cloud deployment bypass — set PD_CLOUD_MODE=true in Railway
+    if os.environ.get("PD_CLOUD_MODE", "").lower() == "true":
+        return
     if not is_test_mode():
         if not client_host or not _is_loopback_host(client_host):
             if websocket:
