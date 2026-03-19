@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Copy requirements from backend
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy backend code into container root
+COPY backend/ .
 
 RUN mkdir -p /app/data
 
