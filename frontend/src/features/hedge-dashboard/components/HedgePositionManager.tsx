@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-const API = "http://localhost:8000/api";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 const fmt$ = (n) => n == null ? "—" : `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const fmtP = (n) => n == null ? "—" : `$${n.toFixed(2)}`;
 const fmtPct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
