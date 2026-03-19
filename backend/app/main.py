@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 # Add after the imports (around line 10):
-_INTERNAL_API_BASE = os.environ.get("INTERNAL_API_URL", f"{_INTERNAL_API_BASE}")
+_INTERNAL_API_BASE = os.environ.get("INTERNAL_API_URL", "http://localhost:8000/api")
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
