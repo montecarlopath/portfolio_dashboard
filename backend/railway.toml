@@ -5,9 +5,6 @@ dockerfilePath = "Dockerfile"
 [deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-
-# Health check — Railway will restart if this fails
 healthcheckPath = "/api/health"
-healthcheckTimeout = 30
-
-# Railway automatically injects PORT — no need to set it here
+healthcheckTimeout = 120
+startCommand = "/app/start.sh"
