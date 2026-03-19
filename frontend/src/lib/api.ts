@@ -552,4 +552,152 @@ export const api = {
     const token = await ensureLocalAuthToken();
     return `${WS_BASE}/finnhub/ws?local_token=${encodeURIComponent(token)}`;
   },
+
+  // ── Hedge API ────────────────────────────────────────────────────────────────
+  getHedgeIntelligence: (accountId = "all") =>
+    fetchJSON<HedgeIntelligence>(`/risk/hedge-intelligence?account_id=${accountId}`),
+  getCrashSim: (accountId = "all", scenarios = "5,10,15,20,25,30") =>
+    fetchJSON<CrashSimResult>(`/hedge/crash-sim?account_id=${accountId}&scenarios=${scenarios}`),
+  getHedgeOrderHistory: (limit = 20) =>
+    fetchJSON<HedgeOrderHistoryResponse>(`/hedge/orders/history?limit=${limit}`),
+  cancelHedgeOrder: (brokerOrderId: string) =>
+    authFetch(`/hedge/orders/cancel?broker_order_id=${encodeURIComponent(brokerOrderId)}`, {
+      method: "POST",
+    }).then((r) => { if (!r.ok) throw new Error(`Failed: ${r.status}`); return r.json(); }),
+  runOrderMonitor: () =>
+    authFetch("/hedge/orders/monitor?reprice=false", { method: "GET" })
+      .then((r) => { if (!r.ok) throw new Error(`Failed: ${r.status}`); return r.json(); }),
+  getHedgeHistory: (accountId = "all", startDate?: string, endDate?: string) => {
+    const today = new Date().toISOString().split("T")[0];
+    const start = startDate ?? (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0]; })();
+    return fetchJSON<HedgeHistory>(
+      `/hedge/history?account_id=${accountId}&start_date=${start}&end_date=${endDate ?? today}`
+    );
+  },
+  writeHedgeSnapshot: (accountId = "all") =>
+    authFetch(`/hedge/history/snapshot?account_id=${accountId}`, { method: "POST" })
+      .then((r) => { if (!r.ok) throw new Error(`Failed: ${r.status}`); return r.json(); }),
+  getEodAlerts: (date?: string) =>
+    fetchJSON<EodAlertsResponse>(`/hedge/eod-alerts${date ? `?date=${date}` : ""}`),
+  clearEodAlerts: (date?: string) =>
+    authFetch(`/hedge/eod-alerts/clear${date ? `?date=${date}` : ""}`, { method: "POST" })
+      .then((r) => { if (!r.ok) throw new Error(`Failed: ${r.status}`); return r.json(); }),
 };
+
+// ── Hedge interfaces ──────────────────────────────────────────────────────────
+
+export interface HedgeSourceBreakdown {
+  source: string;
+  current_hedge_exposure_dollars: number;
+  positions_count: number;
+  option_positions_count: number;
+  current_hedge_premium_cost: number;
+  current_hedge_premium_market_value: number;
+  current_hedge_premium_cost_basis: number;
+}
+
+export interface HedgeIntelligence {
+  as_of_date: string;
+  benchmark: string;
+  market_regime: string;
+  market_risk_score: number;
+  portfolio_value: number;
+  portfolio_beta: number;
+  portfolio_crash_beta: number;
+  portfolio_dollar_beta: number;
+  current_hedge_pct: number;
+  recommended_hedge_pct: number;
+  additional_hedge_pct: number;
+  current_hedge_exposure_dollars: number;
+  recommended_hedge_exposure_dollars: number;
+  additional_hedge_exposure_dollars: number;
+  structural_hedge_exposure_dollars: number;
+  option_hedge_exposure_dollars: number;
+  hedge_budget_dollars: number;
+  remaining_hedge_budget_dollars: number;
+  remaining_hedge_budget_pct: number;
+  current_hedge_premium_cost: number;
+  current_hedge_premium_market_value: number;
+  current_hedge_premium_cost_basis: number;
+  hedge_unrealized_pnl: number;
+  hedged_beta_estimate: number;
+  unhedged_beta_estimate: number;
+  hedge_source_breakdown: Record<string, HedgeSourceBreakdown>;
+  reasons: string[];
+  insights: string[];
+}
+
+export interface CrashScenarioRow {
+  drop_label: string;
+  drop_pct: number;
+  portfolio_loss_dollars: number;
+  structural_hedge_gain_dollars: number;
+  option_hedge_gain_dollars: number;
+  total_hedge_gain_dollars: number;
+  net_dollars: number;
+  hedge_offset_pct: number;
+  notes: string[];
+}
+
+export interface CrashSimResult {
+  as_of_date: string;
+  current_hedge_pct: number;
+  recommended_hedge_pct: number;
+  scenarios: CrashScenarioRow[];
+  scenarios_fully_hedged: CrashScenarioRow[];
+}
+
+export interface HedgeOrderHistoryRow {
+  client_order_id: string;
+  broker_order_id: string | null;
+  lifecycle_state: string;
+  ticket_bucket: string | null;
+  ticket_action: string | null;
+  estimated_debit_dollars: number | null;
+  actual_debit_dollars: number | null;
+  avg_fill_price: number | null;
+  qty: number | null;
+  reprice_count: number;
+  submitted_at_utc: string | null;
+}
+
+export interface HedgeOrderHistoryResponse {
+  orders: HedgeOrderHistoryRow[];
+  filled: number;
+  total_actual_debit_dollars: number;
+}
+
+export interface HedgeHistoryRow {
+  date: string;
+  portfolio_value: number;
+  current_hedge_exposure_dollars: number;
+  current_hedge_pct: number;
+  structural_hedge_exposure_dollars: number;
+  option_hedge_exposure_dollars: number;
+  current_hedge_premium_market_value: number;
+  current_hedge_premium_cost_basis: number;
+  hedge_unrealized_pnl: number;
+  hedged_beta_estimate: number;
+  unhedged_beta_estimate: number;
+}
+
+export interface HedgeHistory {
+  as_of_date: string;
+  benchmark: string;
+  rows: HedgeHistoryRow[];
+}
+
+export interface EodAlert {
+  timestamp_utc: string;
+  date: string;
+  alert_type: "wide_spread" | "no_fill" | "skipped";
+  bucket: string;
+  message: string;
+  width_pct: number | null;
+  resolved: boolean;
+}
+
+export interface EodAlertsResponse {
+  alerts: EodAlert[];
+  as_of: string;
+}

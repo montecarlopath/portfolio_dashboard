@@ -10,6 +10,7 @@ from sqlalchemy import func
 
 from app.composer_client import ComposerClient
 from app.models import (
+    Account,
     Transaction, HoldingsHistory, CashFlow, DailyPortfolio,
     DailyMetrics, BenchmarkData, SyncState, SymphonyAllocationHistory,
     SymphonyDailyPortfolio, SymphonyDailyMetrics,
@@ -41,15 +42,14 @@ _CASH_FLOW_TYPE_MAP = {
 
 def _map_cash_flow_type(type_code: str, subtype: str) -> Optional[str]:
     """Map Composer type/subtype to our simplified type string."""
-    # Try exact match first
     key = (type_code, subtype)
     if key in _CASH_FLOW_TYPE_MAP:
         return _CASH_FLOW_TYPE_MAP[key]
-    # Try with empty subtype
+
     key = (type_code, "")
     if key in _CASH_FLOW_TYPE_MAP:
         return _CASH_FLOW_TYPE_MAP[key]
-    # Special cases
+
     if type_code == "CSD":
         return "deposit"
     if type_code == "CSW":
@@ -129,6 +129,22 @@ def _safe_step(
     return False
 
 
+def _historical_sync_start() -> str:
+    """Central historical start date for full backfills."""
+    return "2020-01-01"
+
+
+def _chunked_date_ranges(since: str, until: Optional[str] = None, chunk_days: int = 90):
+    """Yield inclusive [start, end] ISO date ranges in manageable chunks."""
+    start = date.fromisoformat(since)
+    end = date.fromisoformat(until) if until else date.today()
+
+    while start <= end:
+        chunk_end = min(start + timedelta(days=chunk_days - 1), end)
+        yield start.isoformat(), chunk_end.isoformat()
+        start = chunk_end + timedelta(days=1)
+
+
 def _refresh_symphony_catalog_safe(db: Session):
     """Wrapper to refresh the symphony catalog during sync (lazy import to avoid circular deps)."""
     from app.services.symphony_catalog import _refresh_symphony_catalog
@@ -139,37 +155,129 @@ def full_backfill(db: Session, client: ComposerClient, account_id: str):
     """One-time full backfill of all historical data for a sub-account."""
     logger.info("Starting full backfill for account %s...", account_id)
 
-    # 1. Sync transactions
-    _safe_step("transactions", _sync_transactions, db, client, account_id, since="2020-01-01")
+    historical_start = _historical_sync_start()
 
-    # 2. Sync cash flows (deposits, fees, dividends)
-    _safe_step("cash_flows", _sync_cash_flows, db, client, account_id, since="2020-01-01")
+    tx_ok = _safe_step(
+        "transactions",
+        _sync_transactions,
+        db,
+        client,
+        account_id,
+        since=historical_start,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # 3. Sync portfolio history (daily values)
-    _safe_step("portfolio_history", _sync_portfolio_history, db, client, account_id)
+    cf_ok = _safe_step(
+        "cash_flows",
+        _sync_cash_flows,
+        db,
+        client,
+        account_id,
+        since=historical_start,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # 4. Reconstruct and store holdings history
-    _safe_step("holdings_history", _sync_holdings_history, db, client, account_id)
+    portfolio_ok = _safe_step(
+        "portfolio_history",
+        _sync_portfolio_history,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+        raise_on_failure=True,
+    )
 
-    # 5. Fetch benchmark data
-    _safe_step("benchmark", _sync_benchmark, db, account_id)
+    holdings_ok = _safe_step(
+        "holdings_history",
+        _sync_holdings_history,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # 6. Compute and store all metrics
-    _safe_step("metrics", _recompute_metrics, db, account_id)
+    benchmark_ok = _safe_step(
+        "benchmark",
+        _sync_benchmark,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # 7. Snapshot symphony allocations
-    _safe_step("symphony_allocations", _sync_symphony_allocations, db, client, account_id)
+    metrics_ok = _safe_step(
+        "metrics",
+        _recompute_metrics,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+        raise_on_failure=True,
+    )
 
-    # 8. Sync symphony daily data (full history) and compute symphony metrics
-    _safe_step("symphony_daily", _sync_symphony_daily_backfill, db, client, account_id)
-    _safe_step("symphony_metrics", _recompute_symphony_metrics, db, account_id)
+    _safe_step(
+        "symphony_allocations",
+        _sync_symphony_allocations,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # 9. Refresh symphony catalog (for name search)
-    _safe_step("symphony_catalog", _refresh_symphony_catalog_safe, db)
+    _safe_step(
+        "symphony_daily",
+        _sync_symphony_daily_backfill,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
+    _safe_step(
+        "symphony_metrics",
+        _recompute_symphony_metrics,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    _safe_step(
+        "symphony_catalog",
+        _refresh_symphony_catalog_safe,
+        db,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    if not (tx_ok and cf_ok and portfolio_ok and metrics_ok):
+        raise RuntimeError(
+            f"Full backfill incomplete for {account_id}: "
+            f"tx_ok={tx_ok}, cf_ok={cf_ok}, portfolio_ok={portfolio_ok}, metrics_ok={metrics_ok}"
+        )
+
+    set_sync_state(db, account_id, "initial_backfill_core_done", "true")
     set_sync_state(db, account_id, "initial_backfill_done", "true")
     set_sync_state(db, account_id, "last_sync_date", datetime.now().strftime("%Y-%m-%d"))
-    logger.info("Full backfill complete for account %s", account_id)
+
+    logger.info(
+        "Full backfill complete for %s "
+        "(tx_ok=%s, cf_ok=%s, portfolio_ok=%s, holdings_ok=%s, benchmark_ok=%s, metrics_ok=%s)",
+        account_id,
+        tx_ok,
+        cf_ok,
+        portfolio_ok,
+        holdings_ok,
+        benchmark_ok,
+        metrics_ok,
+    )
+
 
 
 def incremental_update(db: Session, client: ComposerClient, account_id: str):
@@ -183,49 +291,35 @@ def incremental_update(db: Session, client: ComposerClient, account_id: str):
 
     logger.info("Incremental update for %s from %s", account_id, last_date)
 
-    # Sync new data from last_date
-    _safe_step("transactions", _sync_transactions, db, client, account_id, since=last_date)
-    _safe_step("cash_flows", _sync_cash_flows, db, client, account_id, since=last_date)
-    _safe_step("portfolio_history", _sync_portfolio_history, db, client, account_id)
-    _safe_step("holdings_history", _sync_holdings_history, db, client, account_id)
-    _safe_step("benchmark", _sync_benchmark, db, account_id)
-    _safe_step("metrics", _recompute_metrics, db, account_id)
-    _safe_step("symphony_allocations", _sync_symphony_allocations, db, client, account_id)
+    try:
+        since_dt = date.fromisoformat(last_date) - timedelta(days=1)
+        since = since_dt.isoformat()
+    except Exception:
+        since = last_date
 
-    # Sync symphony daily data (incremental: today only) and compute symphony metrics
-    _safe_step("symphony_daily", _sync_symphony_daily_incremental, db, client, account_id)
-    _safe_step("symphony_metrics", _recompute_symphony_metrics, db, account_id)
+    tx_ok = _safe_step(
+        "transactions",
+        _sync_transactions,
+        db,
+        client,
+        account_id,
+        since=since,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
 
-    # Refresh symphony catalog (for name search)
-    _safe_step("symphony_catalog", _refresh_symphony_catalog_safe, db)
-
-    set_sync_state(db, account_id, "last_sync_date", datetime.now().strftime("%Y-%m-%d"))
-    logger.info("Incremental update complete for %s", account_id)
-
-
-def full_backfill_core(db: Session, client: ComposerClient, account_id: str):
-    """First-sync core backfill with blocking non-trade activity sync.
-
-    Ensures non-trade activity (cash flows) is applied before portfolio history
-    and metrics are returned to the user for the first dashboard load.
-    Trade transactions can continue in a follow-up phase.
-    """
-    logger.info("Starting first-sync core backfill for account %s...", account_id)
-
-    # Required for first-view chart/metrics stability: run synchronously.
-    # If non-trade report retrieval fails for this account type, continue with
-    # fallback net-deposit behavior instead of aborting the entire sync.
-    _safe_step(
+    cf_ok = _safe_step(
         "cash_flows",
         _sync_cash_flows,
         db,
         client,
         account_id,
-        since="2020-01-01",
+        since=since,
         retries=_INITIAL_SYNC_STEP_RETRIES,
         retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
     )
-    _safe_step(
+
+    portfolio_ok = _safe_step(
         "portfolio_history",
         _sync_portfolio_history,
         db,
@@ -235,7 +329,27 @@ def full_backfill_core(db: Session, client: ComposerClient, account_id: str):
         retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
         raise_on_failure=True,
     )
+
+    holdings_ok = _safe_step(
+        "holdings_history",
+        _sync_holdings_history,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
     _safe_step(
+        "benchmark",
+        _sync_benchmark,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    metrics_ok = _safe_step(
         "metrics",
         _recompute_metrics,
         db,
@@ -245,7 +359,119 @@ def full_backfill_core(db: Session, client: ComposerClient, account_id: str):
         raise_on_failure=True,
     )
 
-    # Remaining first-view data can degrade gracefully if individual steps fail.
+    _safe_step(
+        "symphony_allocations",
+        _sync_symphony_allocations,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    _safe_step(
+        "symphony_daily",
+        _sync_symphony_daily_incremental,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    _safe_step(
+        "symphony_metrics",
+        _recompute_symphony_metrics,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    _safe_step(
+        "symphony_catalog",
+        _refresh_symphony_catalog_safe,
+        db,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+
+    # For some account types (notably certain IRA accounts), Composer may reject
+    # trade/non-trade report endpoints with 400s. Allow incremental sync to succeed
+    # as long as portfolio history + metrics succeeded.
+    if not (portfolio_ok and metrics_ok):
+        raise RuntimeError(
+            f"Incremental update incomplete for {account_id}: "
+            f"tx_ok={tx_ok}, cf_ok={cf_ok}, portfolio_ok={portfolio_ok}, metrics_ok={metrics_ok}"
+        )
+
+    if not tx_ok:
+        logger.warning(
+            "Transaction incremental sync unavailable for %s; continuing with "
+            "portfolio-history-based update only.",
+            account_id,
+        )
+
+    if not cf_ok:
+        logger.warning(
+            "Cash-flow incremental sync unavailable for %s; continuing with "
+            "portfolio-history-based update and fallback net_deposits where needed.",
+            account_id,
+        )
+
+    set_sync_state(db, account_id, "last_sync_date", datetime.now().strftime("%Y-%m-%d"))
+    logger.info(
+        "Incremental update complete for %s "
+        "(tx_ok=%s, cf_ok=%s, portfolio_ok=%s, holdings_ok=%s, metrics_ok=%s)",
+        account_id,
+        tx_ok,
+        cf_ok,
+        portfolio_ok,
+        holdings_ok,
+        metrics_ok,
+    )
+
+def full_backfill_core(db: Session, client: ComposerClient, account_id: str):
+    """First-sync core backfill with blocking non-trade activity sync.
+
+    Ensures non-trade activity (cash flows) is applied before portfolio history
+    and metrics are returned to the user for the first dashboard load.
+    Trade transactions continue in finish_initial_backfill_activity().
+    """
+    logger.info("Starting first-sync core backfill for account %s...", account_id)
+
+    historical_start = _historical_sync_start()
+
+    cf_ok = _safe_step(
+        "cash_flows",
+        _sync_cash_flows,
+        db,
+        client,
+        account_id,
+        since=historical_start,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+    )
+    portfolio_ok = _safe_step(
+        "portfolio_history",
+        _sync_portfolio_history,
+        db,
+        client,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+        raise_on_failure=True,
+    )
+    metrics_ok = _safe_step(
+        "metrics",
+        _recompute_metrics,
+        db,
+        account_id,
+        retries=_INITIAL_SYNC_STEP_RETRIES,
+        retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
+        raise_on_failure=True,
+    )
+
     _safe_step(
         "holdings_history",
         _sync_holdings_history,
@@ -297,9 +523,18 @@ def full_backfill_core(db: Session, client: ComposerClient, account_id: str):
         retries=_INITIAL_SYNC_STEP_RETRIES,
         retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
     )
+    if not (portfolio_ok and metrics_ok):
+        raise RuntimeError(
+            f"Core backfill incomplete for {account_id}: "
+            f"cf_ok={cf_ok}, portfolio_ok={portfolio_ok}, metrics_ok={metrics_ok}"
+    )
 
-    set_sync_state(db, account_id, "initial_backfill_core_done", "true")
-    logger.info("First-sync core backfill complete for account %s", account_id)
+    if not cf_ok:
+        logger.warning(
+            "Cash-flow backfill incomplete for %s due to report failure/rate limiting; "
+            "continuing with portfolio history + metrics and fallback net_deposits where needed.",
+            account_id,
+        )
 
 
 def finish_initial_backfill_activity(db: Session, client: ComposerClient, account_id: str):
@@ -307,20 +542,30 @@ def finish_initial_backfill_activity(db: Session, client: ComposerClient, accoun
 
     Cash-flow-driven portfolio history and metrics are already finalized in
     full_backfill_core().
+
+    Some Composer account types (for example certain IRA accounts) may not
+    support the trade/non-trade report endpoints and can return 400 errors.
+    In that case, we allow the account to finish initial sync as long as
+    portfolio history already exists from the core backfill.
+
+    We also prevent falsely marking a completely empty account as synced.
     """
     logger.info("Starting first-sync trade-activity backfill for account %s...", account_id)
 
-    _safe_step(
+    historical_start = _historical_sync_start()
+
+    tx_ok = _safe_step(
         "transactions",
         _sync_transactions,
         db,
         client,
         account_id,
-        since="2020-01-01",
+        since=historical_start,
         retries=_INITIAL_SYNC_STEP_RETRIES,
         retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
     )
-    _safe_step(
+
+    holdings_ok = _safe_step(
         "holdings_history",
         _sync_holdings_history,
         db,
@@ -330,88 +575,209 @@ def finish_initial_backfill_activity(db: Session, client: ComposerClient, accoun
         retry_delay_seconds=_INITIAL_SYNC_STEP_RETRY_DELAY_SECONDS,
     )
 
+    # Check whether core backfill already produced portfolio history
+    has_portfolio_history = (
+        db.query(DailyPortfolio.date)
+        .filter(DailyPortfolio.account_id == account_id)
+        .first()
+        is not None
+    )
+
+    # Count synced transactions
+    tx_count = (
+        db.query(Transaction.id)
+        .filter(Transaction.account_id == account_id)
+        .count()
+    )
+
+    # Never mark a completely empty account as synced
+    if not has_portfolio_history and tx_count == 0:
+        raise RuntimeError(
+            f"Refusing to mark initial backfill done for {account_id}: "
+            "no portfolio history and no transactions"
+        )
+
+    # If transaction reports are unavailable but portfolio history exists,
+    # allow the account to complete sync using portfolio-based data only.
+    if has_portfolio_history and tx_count == 0:
+        logger.warning(
+            "Marking initial sync complete for %s using portfolio-history-based data only. "
+            "Transactions are unavailable from Composer reports for this account.",
+            account_id,
+        )
+
+    # If transaction sync itself failed, only allow completion when portfolio
+    # history exists from the core backfill.
+    if not tx_ok:
+        if has_portfolio_history:
+            logger.warning(
+                "Transaction backfill unavailable for %s; "
+                "marking initial sync complete using portfolio-history-based data only. "
+                "Trade table and reconstructed holdings history may be incomplete/unavailable.",
+                account_id,
+            )
+        else:
+            raise RuntimeError(f"Transaction backfill failed for {account_id}")
+
     set_sync_state(db, account_id, "initial_backfill_done", "true")
     set_sync_state(db, account_id, "last_sync_date", datetime.now().strftime("%Y-%m-%d"))
-    logger.info("First-sync trade-activity backfill complete for account %s", account_id)
 
+    logger.info(
+        "First-sync trade-activity backfill complete for %s "
+        "(tx_ok=%s, holdings_ok=%s, has_portfolio_history=%s, tx_count=%s)",
+        account_id,
+        tx_ok,
+        holdings_ok,
+        has_portfolio_history,
+        tx_count,
+    )
 
 # ------------------------------------------------------------------
 # Internal sync helpers
 # ------------------------------------------------------------------
 
 def _sync_transactions(db: Session, client: ComposerClient, account_id: str, since: str):
-    """Fetch trade activity and upsert into transactions table."""
-    trades = client.get_trade_activity(account_id, since=since)
-    new_count = 0
-    for t in trades:
-        order_id = t.get("order_id", "")
-        if not order_id:
-            continue
-        exists = db.query(Transaction).filter_by(account_id=account_id, order_id=order_id).first()
-        if exists:
-            continue
-        # Parse date
-        raw_date = t.get("date", "")
-        try:
-            if len(raw_date) == 10:
-                tx_date = date.fromisoformat(raw_date)
-            else:
-                tx_date = datetime.strptime(raw_date.split(".")[0].replace("T", " "), "%Y-%m-%d %H:%M:%S").date()
-        except Exception:
-            continue
+    """Fetch trade activity in chunks and upsert into transactions table."""
+    total_new = 0
+    total_seen = 0
 
-        db.add(Transaction(
-            account_id=account_id,
-            date=tx_date,
-            symbol=t["symbol"],
-            action=t["action"],
-            quantity=t["quantity"],
-            price=t["price"],
-            total_amount=t["total_amount"],
-            order_id=order_id,
-        ))
-        new_count += 1
+    for chunk_since, chunk_until in _chunked_date_ranges(since, chunk_days=180):
+        trades = client.get_trade_activity(account_id, since=chunk_since, until=chunk_until)
+        logger.info(
+            "Fetched %d trade rows for %s in chunk %s -> %s",
+            len(trades),
+            account_id,
+            chunk_since,
+            chunk_until,
+        )
 
-    db.commit()
-    logger.info("Transactions synced for %s: %d new", account_id, new_count)
+        chunk_new = 0
+        for t in trades:
+            total_seen += 1
+            order_id = t.get("order_id", "")
+            if not order_id:
+                continue
+
+            exists = db.query(Transaction).filter_by(
+                account_id=account_id,
+                order_id=order_id,
+            ).first()
+            if exists:
+                continue
+
+            raw_date = t.get("date", "")
+            try:
+                if len(raw_date) == 10:
+                    tx_date = date.fromisoformat(raw_date)
+                else:
+                    tx_date = datetime.strptime(
+                        raw_date.split(".")[0].replace("T", " "),
+                        "%Y-%m-%d %H:%M:%S"
+                    ).date()
+            except Exception:
+                continue
+
+            db.add(Transaction(
+                account_id=account_id,
+                date=tx_date,
+                symbol=t["symbol"],
+                action=t["action"],
+                quantity=t["quantity"],
+                price=t["price"],
+                total_amount=t["total_amount"],
+                order_id=order_id,
+            ))
+            chunk_new += 1
+            total_new += 1
+
+        db.commit()
+        logger.info(
+            "Transactions synced for %s chunk %s -> %s: %d new",
+            account_id,
+            chunk_since,
+            chunk_until,
+            chunk_new,
+        )
+
+        time.sleep(1)
+
+    logger.info(
+        "Transactions synced for %s: %d new rows total (%d rows fetched across all chunks)",
+        account_id,
+        total_new,
+        total_seen,
+    )
 
 
 def _sync_cash_flows(db: Session, client: ComposerClient, account_id: str, since: str):
-    """Fetch non-trade activity and upsert into cash_flows table."""
-    rows = client.get_non_trade_activity(account_id, since=since)
-
-    # Build set of existing (date, type, amount) for dedup
+    """Fetch non-trade activity in chunks and upsert into cash_flows table."""
     existing = set()
     for cf in db.query(CashFlow).filter_by(account_id=account_id).all():
-        existing.add((str(cf.date), cf.type, round(cf.amount, 4)))
+        existing.add((str(cf.date), cf.type, round(cf.amount, 4), (cf.description or "").strip()))
 
-    new_count = 0
-    for r in rows:
-        mapped_type = _map_cash_flow_type(r["type"], r.get("subtype", ""))
-        if mapped_type is None:
-            continue
-        try:
-            cf_date = date.fromisoformat(r["date"])
-        except Exception:
-            continue
+    total_new = 0
+    total_seen = 0
 
-        key = (r["date"], mapped_type, round(r["amount"], 4))
-        if key in existing:
-            continue
+    for chunk_since, chunk_until in _chunked_date_ranges(since, chunk_days=180):
+        rows = client.get_non_trade_activity(account_id, since=chunk_since, until=chunk_until)
+        logger.info(
+            "Fetched %d non-trade rows for %s in chunk %s -> %s",
+            len(rows),
+            account_id,
+            chunk_since,
+            chunk_until,
+        )
 
-        db.add(CashFlow(
-            account_id=account_id,
-            date=cf_date,
-            type=mapped_type,
-            amount=r["amount"],
-            description=r.get("description", ""),
-            is_manual=0,
-        ))
-        existing.add(key)
-        new_count += 1
+        chunk_new = 0
+        for r in rows:
+            total_seen += 1
 
-    db.commit()
-    logger.info("Cash flows synced for %s: %d new", account_id, new_count)
+            mapped_type = _map_cash_flow_type(r["type"], r.get("subtype", ""))
+            if mapped_type is None:
+                continue
+
+            raw_date = r.get("date", "")
+            try:
+                cf_date = date.fromisoformat(raw_date)
+            except Exception:
+                continue
+
+            amount = round(float(r["amount"]), 4)
+            description = (r.get("description", "") or "").strip()
+            key = (raw_date, mapped_type, amount, description)
+
+            if key in existing:
+                continue
+
+            db.add(CashFlow(
+                account_id=account_id,
+                date=cf_date,
+                type=mapped_type,
+                amount=float(r["amount"]),
+                description=description,
+                is_manual=0,
+            ))
+            existing.add(key)
+            chunk_new += 1
+            total_new += 1
+
+        db.commit()
+        logger.info(
+            "Cash flows synced for %s chunk %s -> %s: %d new",
+            account_id,
+            chunk_since,
+            chunk_until,
+            chunk_new,
+        )
+
+        time.sleep(1)
+
+    logger.info(
+        "Cash flows synced for %s: %d new rows total (%d rows fetched across all chunks)",
+        account_id,
+        total_new,
+        total_seen,
+    )
 
 
 def _roll_forward_cash_flow_totals(
@@ -457,10 +823,9 @@ def _roll_forward_cash_flow_totals(
             if cf.type == "deposit":
                 cum_deposits += cf.amount
             elif cf.type == "withdrawal":
-                cum_deposits += cf.amount  # negative
+                cum_deposits += cf.amount
             elif cf.type.startswith("fee"):
-                cum_fees += cf.amount  # negative
-                # CAT fees reduce net deposits
+                cum_fees += cf.amount
                 if cf.type == "fee_cat":
                     cum_deposits += cf.amount
             elif cf.type == "dividend":
@@ -531,7 +896,6 @@ def _sync_portfolio_history(db: Session, client: ComposerClient, account_id: str
     """Fetch portfolio history and upsert into daily_portfolio table."""
     history = client.get_portfolio_history(account_id)
 
-    # Try to get current cash balance
     try:
         cash_balance = client.get_cash_balance(account_id)
     except Exception:
@@ -551,7 +915,6 @@ def _sync_portfolio_history(db: Session, client: ComposerClient, account_id: str
         existing = db.query(DailyPortfolio).filter_by(account_id=account_id, date=d).first()
         if existing:
             existing.portfolio_value = entry["portfolio_value"]
-            # Only set cash_balance for today
             if ds == today:
                 existing.cash_balance = cash_balance
         else:
@@ -570,7 +933,6 @@ def _sync_portfolio_history(db: Session, client: ComposerClient, account_id: str
 
     _roll_forward_cash_flow_totals(db, account_id, preserve_baseline=False)
 
-    # If no cash flows found, fall back to total-stats API for net_deposits
     has_cash_flows = db.query(CashFlow.id).filter(CashFlow.account_id == account_id).first() is not None
     if not has_cash_flows:
         try:
@@ -589,9 +951,9 @@ def _sync_portfolio_history(db: Session, client: ComposerClient, account_id: str
 
     logger.info("Daily portfolio synced for %s: %d new rows", account_id, new_count)
 
+
 def _sync_holdings_history(db: Session, client: ComposerClient, account_id: str):
     """Reconstruct holdings from transactions and store snapshots."""
-    # Get all transactions from DB for this account
     txs = db.query(Transaction).filter_by(account_id=account_id).order_by(Transaction.date).all()
     tx_dicts = [
         {"date": str(t.date), "symbol": t.symbol, "action": t.action, "quantity": t.quantity}
@@ -606,7 +968,6 @@ def _sync_holdings_history(db: Session, client: ComposerClient, account_id: str)
     new_count = 0
     for snap in snapshots:
         d = date.fromisoformat(snap["date"])
-        # Delete existing entries for this account+date and re-insert
         db.query(HoldingsHistory).filter_by(account_id=account_id, date=d).delete()
         for sym, qty in snap["holdings"].items():
             db.add(HoldingsHistory(account_id=account_id, date=d, symbol=sym, quantity=qty))
@@ -625,14 +986,12 @@ def _sync_benchmark(db: Session, account_id: str):
     settings = get_settings()
     ticker = settings.benchmark_ticker
 
-    # Find date range from daily_portfolio for this account
     first = db.query(func.min(DailyPortfolio.date)).filter(
         DailyPortfolio.account_id == account_id
     ).scalar()
     if not first:
         return
 
-    # Start from last stored benchmark date (minus 1 day buffer) for incremental
     last_stored = db.query(func.max(BenchmarkData.date)).filter(
         BenchmarkData.symbol == ticker
     ).scalar()
@@ -672,7 +1031,6 @@ def _sync_benchmark(db: Session, account_id: str):
 
 def _recompute_metrics(db: Session, account_id: str):
     """Recompute all daily metrics from stored data for a sub-account."""
-    # Load daily portfolio for this account
     portfolio_rows = db.query(DailyPortfolio).filter_by(
         account_id=account_id
     ).order_by(DailyPortfolio.date).all()
@@ -684,21 +1042,18 @@ def _recompute_metrics(db: Session, account_id: str):
         for r in portfolio_rows
     ]
 
-    # Load external cash flows (deposits + withdrawals only for MWR)
     ext_flows = db.query(CashFlow).filter(
         CashFlow.account_id == account_id,
         CashFlow.type.in_(["deposit", "withdrawal"]),
     ).order_by(CashFlow.date).all()
     cf_dicts = [{"date": cf.date, "amount": cf.amount} for cf in ext_flows]
 
-    # Load benchmark
     bench_rows = db.query(BenchmarkData).order_by(BenchmarkData.date).all()
     bench_dicts = [{"date": r.date, "close": r.close} for r in bench_rows] if bench_rows else None
 
     settings = get_settings()
     metrics = compute_all_metrics(daily_dicts, cf_dicts, bench_dicts, settings.risk_free_rate)
 
-    # Upsert metrics (filter keys to valid model columns to avoid schema mismatch crashes)
     _dm_cols = {c.key for c in DailyMetrics.__table__.columns} - {"account_id"}
     for m in metrics:
         d = m["date"]
@@ -716,14 +1071,7 @@ def _recompute_metrics(db: Session, account_id: str):
 
 
 def _sync_symphony_allocations(db: Session, client: ComposerClient, account_id: str):
-    """Snapshot current symphony holdings mapped to the next trading day.
-
-    Only runs after market close (4:00 PM ET) through before market open
-    (9:30 AM ET).  Date logic:
-      - 4:00 PM – midnight ET  → target date = next calendar day
-      - midnight – 9:30 AM ET  → target date = today
-      - Weekends / during market hours → skip
-    """
+    """Snapshot current symphony holdings mapped to the next trading day."""
     target = get_allocation_target_date()
     if target is None:
         logger.info("Skipping symphony allocation snapshot during market hours for %s", account_id)
@@ -733,7 +1081,6 @@ def _sync_symphony_allocations(db: Session, client: ComposerClient, account_id: 
         logger.info("Skipping symphony allocation snapshot — not in post-close window for %s", account_id)
         return
 
-    # Check if we already have a snapshot for the target date
     existing = db.query(SymphonyAllocationHistory).filter_by(
         account_id=account_id, date=target
     ).first()
@@ -767,8 +1114,10 @@ def _sync_symphony_allocations(db: Session, client: ComposerClient, account_id: 
             new_count += 1
 
     db.commit()
-    logger.info("Symphony allocations captured for %s (target date %s): %d holdings across %d symphonies",
-                account_id, target, new_count, len(symphonies))
+    logger.info(
+        "Symphony allocations captured for %s (target date %s): %d holdings across %d symphonies",
+        account_id, target, new_count, len(symphonies)
+    )
 
 
 # ------------------------------------------------------------------
@@ -776,12 +1125,7 @@ def _sync_symphony_allocations(db: Session, client: ComposerClient, account_id: 
 # ------------------------------------------------------------------
 
 def _infer_net_deposits_from_history(history: list) -> list[float]:
-    """Infer cumulative net deposits per day from symphony history.
-
-    Uses the deposit_adjusted_value vs value series to detect cash flows.
-    Logic: deposit_adjusted only moves with market returns, so any
-    difference between expected and actual value indicates a cash flow.
-    """
+    """Infer cumulative net deposits per day from symphony history."""
     if not history:
         return []
 
@@ -798,7 +1142,7 @@ def _infer_net_deposits_from_history(history: list) -> list[float]:
         mkt_ret = (adj_i / prev_adj) if prev_adj > 0 else 1.0
         expected_val = prev_val * mkt_ret
         cf = val_i - expected_val
-        if abs(cf) > 0.50:  # real cash flow (ignore float noise)
+        if abs(cf) > 0.50:
             cum_net_dep += cf
         net_deposits.append(cum_net_dep)
 
@@ -852,11 +1196,13 @@ def _sync_symphony_daily_backfill(db: Session, client: ComposerClient, account_i
                 ))
                 total_new += 1
 
-        time.sleep(0.5)  # rate-limit between symphony history calls
+        time.sleep(0.5)
 
     db.commit()
-    logger.info("Symphony daily backfill for %s: %d new rows across %d symphonies",
-                account_id, total_new, len(symphonies))
+    logger.info(
+        "Symphony daily backfill for %s: %d new rows across %d symphonies",
+        account_id, total_new, len(symphonies)
+    )
 
 
 def _sync_symphony_daily_incremental(db: Session, client: ComposerClient, account_id: str):
@@ -898,18 +1244,14 @@ def _sync_symphony_daily_incremental(db: Session, client: ComposerClient, accoun
             new_count += 1
 
     db.commit()
-    logger.info("Symphony daily incremental for %s: %d new rows for %d symphonies",
-                account_id, new_count, len(symphonies))
+    logger.info(
+        "Symphony daily incremental for %s: %d new rows for %d symphonies",
+        account_id, new_count, len(symphonies)
+    )
 
 
 def _recompute_symphony_metrics(db: Session, account_id: str):
-    """Compute daily metrics for each symphony from stored SymphonyDailyPortfolio data.
-
-    Uses incremental computation when possible: if metrics already exist for all
-    days except the latest, only the latest day is computed (one IRR solve instead
-    of N).  Falls back to full backfill when metrics are missing for earlier days.
-    """
-    # Get distinct symphony IDs for this account
+    """Compute daily metrics for each symphony from stored SymphonyDailyPortfolio data."""
     sym_ids = [
         row[0] for row in
         db.query(SymphonyDailyPortfolio.symphony_id).filter_by(
@@ -932,14 +1274,12 @@ def _recompute_symphony_metrics(db: Session, account_id: str):
             for r in portfolio_rows
         ]
 
-        # Infer cash flow events from net_deposits changes for MWR
         cf_dicts = []
         for j in range(1, len(portfolio_rows)):
             delta = portfolio_rows[j].net_deposits - portfolio_rows[j - 1].net_deposits
             if abs(delta) > 0.50:
                 cf_dicts.append({"date": portfolio_rows[j].date, "amount": delta})
 
-        # Check if we can do incremental (metrics exist for all days except the last)
         last_metric_date = db.query(func.max(SymphonyDailyMetrics.date)).filter_by(
             account_id=account_id, symphony_id=sym_id,
         ).scalar()
@@ -955,17 +1295,16 @@ def _recompute_symphony_metrics(db: Session, account_id: str):
         )
 
         if use_incremental:
-            # Incremental: compute only the latest day's metrics
             m = compute_latest_metrics(daily_dicts, cf_dicts, settings.risk_free_rate)
             if m:
                 metrics_to_persist = [m]
                 logger.debug("Incremental metrics for symphony %s: 1 new day", sym_id)
+            else:
+                metrics_to_persist = []
         else:
-            # Full backfill: compute all days
             metrics_to_persist = compute_all_metrics(daily_dicts, cf_dicts, None, settings.risk_free_rate)
             logger.debug("Full backfill metrics for symphony %s: %d days", sym_id, len(metrics_to_persist))
 
-        # Persist (upsert — filter keys to valid model columns)
         _sdm_cols = {c.key for c in SymphonyDailyMetrics.__table__.columns} - {"account_id", "symphony_id"}
         for m in metrics_to_persist:
             d = m["date"]

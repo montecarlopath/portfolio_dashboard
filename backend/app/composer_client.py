@@ -27,6 +27,7 @@ _symphony_stats_cache: Dict[Tuple[str, str, str], Dict[str, object]] = {}
 class SymphonyStatsRateLimitError(RuntimeError):
     """Raised when symphony stats are rate-limited without a cached payload."""
 
+
 # Map Composer account_type strings to friendly display names
 ACCOUNT_TYPE_DISPLAY = {
     "INDIVIDUAL": "Taxable",
@@ -50,7 +51,6 @@ class ComposerClient:
         self.__headers = {
             "x-api-key-id": api_key_id,
             "Authorization": f"Bearer {api_secret}",
-            # Required for backtest-api / stagehand-api endpoints (watchlist, drafts, etc).
             "x-origin": _COMPOSER_ORIGIN,
             "accept": "application/json",
             "Content-Type": "application/json",
@@ -217,23 +217,27 @@ class ComposerClient:
     # Trade activity (CSV)
     # ------------------------------------------------------------------
 
-    def get_trade_activity(self, account_id: str, since: str = "2020-01-01", until: str = None) -> List[Dict]:
-        """Fetch all trade-activity rows as parsed dicts.
+    def get_trade_activity(
+        self,
+        account_id: str,
+        since: str = "2020-01-01",
+        until: Optional[str] = None,
+    ) -> List[Dict]:
+        """Fetch trade activity report CSV and return parsed rows.
 
-        Returns list of {date, symbol, action, quantity, price, total_amount, order_id}.
+        `since` and `until` are inclusive ISO dates (YYYY-MM-DD).
         """
-        if until is None:
-            until = datetime.now().strftime("%Y-%m-%d")
         aid = account_id
-        csv_text = self._get_csv(
-            f"api/v0.1/reports/{aid}",
-            params={
-                "since": f"{since}T00:00:00Z",
-                "until": f"{until}T23:59:59Z",
-                "report-type": "trade-activity",
-            },
-        )
-        return self._parse_trade_csv(csv_text)
+        until = until or datetime.now().strftime("%Y-%m-%d")
+
+        params = {
+            "report-type": "trade-activity",
+            "since": f"{since}T00:00:00Z",
+            "until": f"{until}T23:59:59Z",
+        }
+
+        text = self._get_csv(f"api/v0.1/reports/{aid}", params=params)
+        return self._parse_trade_csv(text)
 
     def _parse_trade_csv(self, csv_text: str) -> List[Dict]:
         rows = []
@@ -264,23 +268,27 @@ class ComposerClient:
     # Non-trade activity (CSV) - deposits, fees, dividends
     # ------------------------------------------------------------------
 
-    def get_non_trade_activity(self, account_id: str, since: str = "2020-01-01", until: str = None) -> List[Dict]:
-        """Fetch non-trade-activity rows as parsed dicts.
+    def get_non_trade_activity(
+        self,
+        account_id: str,
+        since: str = "2020-01-01",
+        until: Optional[str] = None,
+    ) -> List[Dict]:
+        """Fetch non-trade activity report CSV and return parsed rows.
 
-        Returns list of {date, type, subtype, amount, description}.
+        `since` and `until` are inclusive ISO dates (YYYY-MM-DD).
         """
-        if until is None:
-            until = datetime.now().strftime("%Y-%m-%d")
         aid = account_id
-        csv_text = self._get_csv(
-            f"api/v0.1/reports/{aid}",
-            params={
-                "since": f"{since}T00:00:00Z",
-                "until": f"{until}T23:59:59Z",
-                "report-type": "non-trade-activity",
-            },
-        )
-        return self._parse_non_trade_csv(csv_text)
+        until = until or datetime.now().strftime("%Y-%m-%d")
+
+        params = {
+            "report-type": "non-trade-activity",
+            "since": f"{since}T00:00:00Z",
+            "until": f"{until}T23:59:59Z",
+        }
+
+        text = self._get_csv(f"api/v0.1/reports/{aid}", params=params)
+        return self._parse_non_trade_csv(text)
 
     def _parse_non_trade_csv(self, csv_text: str) -> List[Dict]:
         rows = []
@@ -308,11 +316,7 @@ class ComposerClient:
     # ------------------------------------------------------------------
 
     def get_symphony_stats(self, account_id: str) -> List[Dict]:
-        """Fetch active symphony stats for an account via symphony-stats-meta.
-
-        Returns list of symphony dicts with id, name, value, net_deposits,
-        simple_return, time_weighted_return, holdings, etc.
-        """
+        """Fetch active symphony stats for an account via symphony-stats-meta."""
         now = time.monotonic()
         cache_key = self._symphony_stats_cache_key(account_id)
 
@@ -400,10 +404,7 @@ class ComposerClient:
             ) from exc
 
     def get_symphony_history(self, account_id: str, symphony_id: str) -> List[Dict]:
-        """Fetch daily value history for a specific symphony.
-
-        Returns list of {'date': 'YYYY-MM-DD', 'value': float, 'deposit_adjusted_value': float}.
-        """
+        """Fetch daily value history for a specific symphony."""
         data = self._get_json(
             f"api/v0.1/portfolio/accounts/{account_id}/symphonies/{symphony_id}"
         )
@@ -426,11 +427,7 @@ class ComposerClient:
         return result
 
     def get_symphony_versions(self, symphony_id: str) -> List[Dict]:
-        """Fetch version history for a symphony.
-
-        Returns list of version dicts (newest first) with created_at timestamps.
-        Used to detect if a symphony has been modified since a cached backtest.
-        """
+        """Fetch version history for a symphony."""
         try:
             data = self._get_json(f"api/v0.1/symphonies/{symphony_id}/versions")
             versions = data if isinstance(data, list) else data.get("versions", [])
@@ -440,10 +437,7 @@ class ComposerClient:
             return []
 
     def get_symphony_score(self, symphony_id: str) -> Dict:
-        """Fetch the full symphony structure/definition via the score endpoint.
-
-        Returns the complete logic tree, nodes, and configuration.
-        """
+        """Fetch the full symphony structure/definition via the score endpoint."""
         try:
             data = self._get_json(f"api/v0.1/symphonies/{symphony_id}/score")
             return data
@@ -452,18 +446,7 @@ class ComposerClient:
             return {}
 
     def get_symphony_backtest(self, symphony_id: str) -> Dict:
-        """Run backtest for an existing symphony.
-
-        Returns the full backtest response with dvm_capital, stats, benchmarks, etc.
-
-        Slippage & spread parameters:
-          - slippage_percent: 0.0005 (5 bps)  - Composer default is 1 bps (0.0001)
-          - spread_markup:    0.001  (10 bps)  - Composer default is 0
-          Our more conservative friction (5 bps/trade vs Composer's 1 bps) better
-          approximates real-world execution costs.  This means backtest results from
-          this app will be slightly lower than Composer's UI for the same period
-          (typically 3-5 pp over several months for active strategies).
-        """
+        """Run backtest for an existing symphony."""
         url = f"{self.base_url}/api/v0.1/symphonies/{symphony_id}/backtest"
         resp = requests.post(url, headers=self.headers, json={
             "capital": 10000,
@@ -495,10 +478,7 @@ class ComposerClient:
     # ------------------------------------------------------------------
 
     def dry_run(self, account_uuids: List[str] = None) -> List[Dict]:
-        """Run dry-run rebalance preview for all symphonies across accounts.
-
-        Returns list of per-account results with dry_run_result keyed by symphony ID.
-        """
+        """Run dry-run rebalance preview for all symphonies across accounts."""
         url = f"{self.base_url}/api/v0.1/dry-run"
         body = {"send_segment_event": False}
         if account_uuids:
@@ -515,10 +495,7 @@ class ComposerClient:
         return data
 
     def get_trade_preview(self, symphony_id: str, broker_account_uuid: str = None) -> Dict:
-        """Get trade preview for a single symphony.
-
-        Returns preview with recommended_trades, next_rebalance_after, etc.
-        """
+        """Get trade preview for a single symphony."""
         url = f"{self.base_url}/api/v0.1/dry-run/trade-preview/{symphony_id}"
         body: Dict = {}
         if broker_account_uuid:
@@ -535,9 +512,7 @@ class ComposerClient:
         return data
 
     # ------------------------------------------------------------------
-    # Watchlist & Drafts (backtest-api subdomain)
-    # NOTE: These endpoints use the same API key id + API secret, but require
-    # an x-origin header (public-api).
+    # Watchlist & Drafts
     # ------------------------------------------------------------------
 
     @property
@@ -546,10 +521,7 @@ class ComposerClient:
         return self.base_url.replace("://api.", "://backtest-api.")
 
     def get_watchlist(self) -> List[Dict]:
-        """Fetch the user's watchlisted symphonies from backtest-api.
-
-        Returns list of dicts with at least 'id' and 'name' keys.
-        """
+        """Fetch the user's watchlisted symphonies from backtest-api."""
         url = f"{self._backtest_api_base}/api/v1/watchlist"
         resp = requests.get(url, headers=self.headers, timeout=_DEFAULT_HTTP_TIMEOUT)
         if resp.status_code == 429:
@@ -566,10 +538,7 @@ class ComposerClient:
         return items
 
     def get_drafts(self) -> List[Dict]:
-        """Fetch the user's draft symphonies from backtest-api.
-
-        Returns list of dicts with at least 'id' and 'name' keys.
-        """
+        """Fetch the user's draft symphonies from backtest-api."""
         url = f"{self._backtest_api_base}/api/v1/user/symphonies/drafts"
         resp = requests.get(url, headers=self.headers, timeout=_DEFAULT_HTTP_TIMEOUT)
         if resp.status_code == 429:
@@ -584,6 +553,7 @@ class ComposerClient:
         items = data if isinstance(data, list) else data.get("symphonies", data.get("items", []))
         logger.info("Drafts: %d symphonies", len(items))
         return items
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

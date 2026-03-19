@@ -6,11 +6,12 @@ import csv
 import io
 import logging
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional 
 
 import requests
 
 from app.config import load_finnhub_key, load_polygon_key
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,29 @@ class PolygonAccessError(PolygonError):
 
 class PolygonNotConfiguredError(PolygonAccessError):
     """Raised when no Polygon key is configured."""
+
+# Add near the top of finnhub_market_data.py
+import time as _time
+_price_cache: dict = {}
+_CACHE_TTL = 60  # seconds
+
+def get_latest_price(symbol: str) -> float | None:
+    now = _time.time()
+    if symbol in _price_cache:
+        cached_val, cached_at = _price_cache[symbol]
+        if now - cached_at < _CACHE_TTL:
+            return cached_val
+    try:
+        data = _request_json("/quote", {"symbol": symbol}, timeout=10)
+        price = float(data.get("c") or 0) or None
+        if price:
+            _price_cache[symbol] = (price, now)
+        return price
+    except Exception:
+        # Return stale cache on error rather than crashing
+        if symbol in _price_cache:
+            return _price_cache[symbol][0]
+        return None
 
 
 def get_daily_closes_stooq(symbol: str, start_date: date, end_date: date) -> List[Tuple[date, float]]:
@@ -329,3 +353,29 @@ def get_splits(symbol: str, start_date: date, end_date: date) -> List[Tuple[date
     out.sort(key=lambda x: x[0])
     logger.debug("Finnhub splits %s: %d events", symbol, len(out))
     return out
+
+
+
+def get_stock_beta(symbol: str) -> Optional[float]:
+    api_key = load_finnhub_key()
+    if not api_key:
+        return None
+
+    url = "https://finnhub.io/api/v1/stock/metric"
+    params = {
+        "symbol": symbol,
+        "metric": "all",
+        "token": api_key,
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        metric = data.get("metric", {}) if isinstance(data, dict) else {}
+        beta = metric.get("beta")
+        if beta is None:
+            return None
+        return float(beta)
+    except Exception:
+        return None

@@ -7,6 +7,9 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 # Project root: two levels up from this file (backend/app/config.py -> project root)
@@ -248,6 +251,43 @@ def load_polygon_key() -> Optional[str]:
         return key if key else None
     except Exception:
         return None
+
+def load_alpaca_key() -> Optional[str]:
+    """Return the Alpaca API key id from config.json, or None if not configured."""
+    try:
+        data = _load_config_json()
+        key = data.get("alpaca", {}).get("api_key_id", "")
+        return key if key else None
+    except Exception:
+        return None
+
+
+def load_alpaca_secret() -> Optional[str]:
+    """Return the Alpaca API secret from config.json, or None if not configured."""
+    try:
+        data = _load_config_json()
+        secret = data.get("alpaca", {}).get("api_secret", "")
+        return secret if secret else None
+    except Exception:
+        return None
+
+
+def load_alpaca_base_url() -> str:
+    """Return the Alpaca trading base URL from config.json."""
+    try:
+        data = _load_config_json()
+        return data.get("alpaca", {}).get("base_url", "https://paper-api.alpaca.markets")
+    except Exception:
+        return "https://paper-api.alpaca.markets"
+
+
+def load_alpaca_data_url() -> str:
+    """Return the Alpaca market data base URL from config.json."""
+    try:
+        data = _load_config_json()
+        return data.get("alpaca", {}).get("data_url", "https://data.alpaca.markets")
+    except Exception:
+        return "https://data.alpaca.markets"
 
 
 def _config_json_path() -> str:

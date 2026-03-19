@@ -200,3 +200,46 @@ class SyncState(Base):
     account_id = Column(Text, primary_key=True)
     key = Column(Text, primary_key=True)
     value = Column(Text, nullable=False)
+
+
+class HedgeSnapshot(Base):
+    """
+    Daily hedge state snapshot.
+ 
+    Written once per day by the hedge_snapshot_writer service.
+    Read by hedge_history_read for the /hedge/history endpoint.
+ 
+    This replaces the previous on-the-fly recomputation approach which
+    made 3+ network calls per trading day in the requested range.
+    """
+    __tablename__ = "hedge_snapshots"
+ 
+    # ── Primary key: one row per calendar date ────────────────────────────────
+    date = Column(Date, primary_key=True)
+ 
+    # ── Portfolio state ────────────────────────────────────────────────────────
+    portfolio_value = Column(Float, nullable=False, default=0.0)
+    portfolio_beta = Column(Float, nullable=False, default=0.0)
+ 
+    # ── Hedge exposure ─────────────────────────────────────────────────────────
+    current_hedge_exposure_dollars = Column(Float, nullable=False, default=0.0)
+    current_hedge_pct = Column(Float, nullable=False, default=0.0)
+    recommended_hedge_pct = Column(Float, nullable=False, default=0.0)
+    structural_hedge_exposure_dollars = Column(Float, nullable=False, default=0.0)
+    option_hedge_exposure_dollars = Column(Float, nullable=False, default=0.0)
+ 
+    # ── Option premium tracking ────────────────────────────────────────────────
+    current_hedge_premium_market_value = Column(Float, nullable=False, default=0.0)
+    current_hedge_premium_cost_basis = Column(Float, nullable=False, default=0.0)
+    hedge_unrealized_pnl = Column(Float, nullable=False, default=0.0)
+ 
+    # ── Beta estimates ─────────────────────────────────────────────────────────
+    hedged_beta_estimate = Column(Float, nullable=False, default=0.0)
+    unhedged_beta_estimate = Column(Float, nullable=False, default=0.0)
+ 
+    # ── Regime ────────────────────────────────────────────────────────────────
+    market_regime = Column(Text, nullable=True)
+    market_risk_score = Column(Float, nullable=True)
+ 
+    # ── Metadata ──────────────────────────────────────────────────────────────
+    written_at = Column(DateTime, nullable=True)   # UTC timestamp when written
