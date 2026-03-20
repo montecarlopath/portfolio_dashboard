@@ -18,8 +18,11 @@ export function useHedgeIntelligence(accountId = "all") {
     return useQuery<HedgeIntelligence>({
         queryKey: ["hedge-intelligence", accountId],
         queryFn: () => api.getHedgeIntelligence(accountId),
-        staleTime: STALE_TIME,
-        refetchInterval: 5 * 60_000, // refetch every 5 min
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: false,
+        refetchInterval: 5 * 60_000,
     });
 }
 
@@ -27,7 +30,11 @@ export function useCrashSim(accountId = "all") {
     return useQuery<CrashSimResult>({
         queryKey: ["hedge-crash-sim", accountId],
         queryFn: () => api.getCrashSim(accountId),
-        staleTime: STALE_TIME,
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: false,
+        refetchInterval: 5 * 60_000,
     });
 }
 
