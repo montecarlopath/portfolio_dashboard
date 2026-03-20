@@ -42,58 +42,6 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _classify_option_bucket(
-    *,
-    expiry: Optional[str],
-    strike: Optional[float],
-    option_type: Optional[str],
-    underlying: str,
-    as_of_date: str,
-    spot_price: Optional[float],
-) -> Literal["primary", "tail", "other"]:
-    if underlying != "QQQ":
-        return "other"
-
-    if option_type != "P":
-        return "other"
-
-    if not expiry or not strike or not spot_price or spot_price <= 0:
-        return "other"
-
-    try:
-        dte = (date.fromisoformat(expiry) - date.fromisoformat(as_of_date)).days
-    except Exception:
-        return "other"
-
-    strike_ratio = strike / spot_price
-
-    if 30 <= dte <= 110 and 0.85 <= strike_ratio <= 0.98:
-        return "primary"
-
-    if 75 <= dte <= 160 and 0.65 <= strike_ratio < 0.85:
-        return "tail"
-
-    if 20 <= dte <= 120 and 0.80 <= strike_ratio <= 1.00:
-        return "primary"
-
-    return "other"
-
-
-def _classify_structure_type(
-    *,
-    bucket: Literal["primary", "tail", "other"],
-    option_type: Optional[str],
-) -> Literal["naked_put", "put_spread_leg", "tail_put", "other"]:
-    if option_type != "P":
-        return "other"
-
-    if bucket == "primary":
-        return "naked_put"
-
-    if bucket == "tail":
-        return "tail_put"
-
-    return "other"
 
 
 def _extract_current_hedge_positions(
@@ -125,7 +73,9 @@ def _extract_current_hedge_positions(
             underlying=parsed.underlying,
             as_of_date=as_of_date,
             spot_price=spot_price,
-        )
+            quantity=quantity,
+            delta_dollars=delta_dollars,
+)
 
         structure_type = classify_structure_type(
             bucket=bucket,
