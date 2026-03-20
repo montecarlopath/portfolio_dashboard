@@ -582,6 +582,16 @@ export const api = {
   clearEodAlerts: (date?: string) =>
     authFetch(`/hedge/eod-alerts/clear${date ? `?date=${date}` : ""}`, { method: "POST" })
       .then((r) => { if (!r.ok) throw new Error(`Failed: ${r.status}`); return r.json(); }),
+  getHedgeReconcile: (accountId = "all") =>
+    fetchJSON<Record<string, unknown>>(`/hedge/reconcile?account_id=${accountId}`),
+  getHedgePlan: (accountId = "all") =>
+    fetchJSON<Record<string, unknown>>(`/hedge/plan?account_id=${accountId}`),
+  getHedgeSelect: (accountId = "all") =>
+    fetchJSON<Record<string, unknown>>(`/hedge/select?account_id=${accountId}`),
+  getHedgeRoll: (accountId = "all") =>
+    fetchJSON<Record<string, unknown>>(`/hedge/roll?account_id=${accountId}`),
+  getHedgeTickets: (accountId = "all", mode = "preview") =>
+    fetchJSON<Record<string, unknown>>(`/hedge/tickets?account_id=${accountId}&mode=${mode}`),
 };
 
 // ── Hedge interfaces ──────────────────────────────────────────────────────────

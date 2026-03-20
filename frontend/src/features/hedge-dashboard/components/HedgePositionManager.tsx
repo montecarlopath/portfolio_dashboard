@@ -2,20 +2,20 @@
 import { useState, useEffect, useCallback } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-const fmt$ = (n) => n == null ? "—" : `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-const fmtP = (n) => n == null ? "—" : `$${n.toFixed(2)}`;
-const fmtPct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
+const fmt$ = (n: any) => n == null ? "—" : `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+const fmtP = (n: any) => n == null ? "—" : `$${n.toFixed(2)}`;
+const fmtPct = (n: any) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
 
-function get(path) {
+function get(path: string) {
     return fetch(`${API}${path}`, { cache: "no-store" }).then(r => r.json()).catch(e => ({ _error: e.message }));
 }
-function post(path) {
+function post(path: string) {
     return fetch(`${API}${path}`, { method: "POST", cache: "no-store" }).then(r => r.json()).catch(e => ({ _error: e.message }));
 }
 
-function buildSpreads(positions) {
+function buildSpreads(positions: any[]) {
     const opts = positions.filter(p => p.symbol?.match(/^[A-Z]+\d{6}[PC]\d{8}$/));
-    const byExpiry = {};
+    const byExpiry: Record<string, any[]> = {};
     for (const p of opts) {
         const m = p.symbol.match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
         if (!m) continue;
@@ -151,13 +151,13 @@ const css = `
 `;
 
 export default function HedgePositionManager() {
-    const [positions, setPositions] = useState([]);
+    const [positions, setPositions] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [closing, setClosing] = useState({});
-    const [results, setResults] = useState({});
-    const [confirm, setConfirm] = useState(null);
-    const [intel, setIntel] = useState(null);
-    const [closeQty, setCloseQty] = useState({});
+    const [closing, setClosing] = useState<any>({});
+    const [results, setResults] = useState<any>({});
+    const [confirm, setConfirm] = useState<any>(null);
+    const [intel, setIntel] = useState<any>(null);
+    const [closeQty, setCloseQty] = useState<any>({});
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -174,10 +174,10 @@ export default function HedgePositionManager() {
 
     const spreads = buildSpreads(positions);
 
-    async function handleClose(spread, mode = "preview") {
+    async function handleClose(spread: any, mode = "preview") {
         const qty = closeQty[spread.expiry] ?? spread.qty;
         if (mode === "submit" && confirm !== spread.expiry) { setConfirm(spread.expiry); return; }
-        setClosing(c => ({ ...c, [spread.expiry]: true }));
+        setClosing((c: any) => ({ ...c, [spread.expiry]: true }));
         setConfirm(null);
         try {
             const params = new URLSearchParams({
@@ -185,12 +185,12 @@ export default function HedgePositionManager() {
                 ...(spread.shortSymbol ? { short_symbol: spread.shortSymbol } : {}),
             });
             const result = await post(`/hedge/close-position?${params}`);
-            setResults(r => ({ ...r, [spread.expiry]: result }));
+            setResults((r: any) => ({ ...r, [spread.expiry]: result }));
             if (mode === "submit") await load();
-        } catch (e) {
-            setResults(r => ({ ...r, [spread.expiry]: { _error: e.message } }));
+        } catch (e: any) {
+            setResults((r: any) => ({ ...r, [spread.expiry]: { _error: e.message } }));
         } finally {
-            setClosing(c => ({ ...c, [spread.expiry]: false }));
+            setClosing((c: any) => ({ ...c, [spread.expiry]: false }));
         }
     }
 
@@ -223,7 +223,7 @@ export default function HedgePositionManager() {
                         <p className="hpm-alert-body">
                             Current option hedge <strong>{fmtPct(intel.current_hedge_pct)}</strong> · Recommended <strong>{fmtPct(intel.recommended_hedge_pct)}</strong> · Excess {fmt$(excess)} coverage
                         </p>
-                        <p className="hpm-alert-body">Close the May-29 spread to return to target. The Jun-30 spread can stay — it's your tail protection.</p>
+                        <p className="hpm-alert-body">Close the May-29 spread to return to target. The Jun-30 spread can stay — it&apos;s your tail protection.</p>
                     </div>
                 )}
 
@@ -294,7 +294,7 @@ export default function HedgePositionManager() {
                                     <span className="hpm-qty-lbl">Close</span>
                                     <input type="number" min={1} max={spread.qty} value={qtyToClose}
                                         className="hpm-qty-in"
-                                        onChange={e => setCloseQty(q => ({
+                                        onChange={e => setCloseQty((q: any) => ({
                                             ...q, [spread.expiry]: Math.min(spread.qty, Math.max(1, parseInt(e.target.value) || 1))
                                         }))}
                                     />

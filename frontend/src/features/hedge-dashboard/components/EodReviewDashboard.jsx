@@ -1,14 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+    useHedgeIntelligence,
+    useHedgeReconcile,
+    useHedgePlan,
+    useHedgeSelect,
+    useHedgeRoll,
+    useHedgeTickets,
+    useHedgeOrderHistory,
+    useEodAlerts,
+    useHedgeHistory,
+    useCrashSim,
+} from "../hooks/useHedgeDashboardData";
 
-const API = "http://localhost:8000/api";
 const fmt$ = (n) => n == null ? "—" : `$${Math.round(Math.abs(n)).toLocaleString()}`;
 const fmtPct = (n, d = 1) => n == null ? "—" : `${(n * 100).toFixed(d)}%`;
 const fmtN = (n, d = 2) => n == null ? "—" : Number(n).toFixed(d);
 const fmtTime = (s) => { if (!s) return "—"; try { return new Date(s).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }); } catch { return s; } };
-
-function get(path) { return fetch(`${API}${path}`, { cache: "no-store" }).then(r => r.json()).catch(e => ({ _error: e.message })); }
 
 const STATUS = {
     ok: { bg: "var(--color-background-success)", color: "var(--color-text-success)", label: "OK" },
@@ -23,7 +32,7 @@ function Badge({ type = "idle", label }) {
     return <span style={{ background: s.bg, color: s.color, fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 6, letterSpacing: "0.03em" }}>{label || s.label}</span>;
 }
 
-function Card({ title, layer, status = "idle", children, accent }) {
+function Card({ title, layer, status = "idle", children }) {
     const colors = {
         L1: "#0D9488", L2: "#7C3AED", L3: "#D97706", L4: "#2563EB", L5: "#EA580C", L6: "#DC2626", L7: "#16A34A", L8: "#475569"
     };
@@ -75,44 +84,46 @@ function Section({ title }) {
 }
 
 export default function EodReviewDashboard() {
-    const [data, setData] = useState({});
-    const [loading, setLoading] = useState(true);
-    const [refreshed, setRefreshed] = useState(null);
+    const qc = useQueryClient();
+    const today = new Date().toISOString().split("T")[0];
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        const today = new Date().toISOString().split("T")[0];
-        const start = new Date(Date.now() - 35 * 86400000).toISOString().split("T")[0];
-        const [intel, reconcile, plan, select, roll, tickets, orders, eodAlerts, history, crash] = await Promise.all([
-            get("/risk/hedge-intelligence?account_id=all"),
-            get("/hedge/reconcile?account_id=all"),
-            get("/hedge/plan?account_id=all"),
-            get("/hedge/select?account_id=all"),
-            get("/hedge/roll?account_id=all"),
-            get("/hedge/tickets?account_id=all&mode=preview"),
-            get("/hedge/orders/history?limit=20"),
-            get(`/hedge/eod-alerts?date=${today}`),
-            get(`/hedge/history?account_id=all&start_date=${start}&end_date=${today}`),
-            get("/hedge/crash-sim?account_id=all&scenarios=10,15,20,30"),
-        ]);
-        setData({ intel, reconcile, plan, select, roll, tickets, orders, eodAlerts, history, crash });
-        setRefreshed(new Date().toLocaleTimeString());
-        setLoading(false);
-    }, []);
+    const { data: intelData, isLoading: intelLoading } = useHedgeIntelligence();
+    const { data: reconcileData, isLoading: recLoading } = useHedgeReconcile();
+    const { data: planData, isLoading: planLoading } = useHedgePlan();
+    const { data: selectData, isLoading: selLoading } = useHedgeSelect();
+    const { data: rollData, isLoading: rollLoading } = useHedgeRoll();
+    const { data: ticketsData, isLoading: tktLoading } = useHedgeTickets("all", "preview");
+    const { data: ordersData, isLoading: ordLoading } = useHedgeOrderHistory();
+    const { data: eodAlertsData, isLoading: eodLoading } = useEodAlerts(today);
+    const { data: historyData, isLoading: histLoading } = useHedgeHistory();
+    const { data: crashData, isLoading: crashLoading } = useCrashSim();
 
-    useEffect(() => { load(); }, [load]);
+    const load = () => {
+        qc.invalidateQueries({ queryKey: ["hedge-intelligence"] });
+        qc.invalidateQueries({ queryKey: ["hedge-reconcile"] });
+        qc.invalidateQueries({ queryKey: ["hedge-plan"] });
+        qc.invalidateQueries({ queryKey: ["hedge-select"] });
+        qc.invalidateQueries({ queryKey: ["hedge-roll"] });
+        qc.invalidateQueries({ queryKey: ["hedge-tickets"] });
+        qc.invalidateQueries({ queryKey: ["hedge-order-history"] });
+        qc.invalidateQueries({ queryKey: ["eod-alerts"] });
+        qc.invalidateQueries({ queryKey: ["hedge-history"] });
+        qc.invalidateQueries({ queryKey: ["hedge-crash-sim"] });
+    };
 
-    const d = data;
-    const intel = d.intel || {};
-    const recon = d.reconcile || {};
-    const plan = d.plan || {};
-    const sel = d.select || {};
-    const roll = d.roll || {};
-    const tickets = d.tickets || {};
-    const orders = d.orders || {};
-    const eodAlerts = d.eodAlerts || {};
-    const history = d.history || {};
-    const crash = d.crash || {};
+    const loading = intelLoading || recLoading || planLoading || selLoading || rollLoading || tktLoading || ordLoading || eodLoading || histLoading || crashLoading;
+    const refreshed = new Date().toLocaleTimeString();
+
+    const intel = intelData || {};
+    const recon = reconcileData || {};
+    const plan = planData || {};
+    const sel = selectData || {};
+    const roll = rollData || {};
+    const tickets = ticketsData || {};
+    const orders = ordersData || {};
+    const eodAlerts = eodAlertsData || {};
+    const history = historyData || {};
+    const crash = crashData || {};
 
     const regime = intel.market_regime || "—";
     const gapPct = intel.additional_hedge_pct;
@@ -452,11 +463,7 @@ export default function EodReviewDashboard() {
                 ))}
             </div>
 
-            <div style={{ marginTop: 16, textAlign: "center" }}>
-                <button onClick={() => sendPrompt("What should I optimize in today's hedge pipeline based on this EOD review?")} style={{ fontSize: 13 }}>
-                    Ask for optimization suggestions ↗
-                </button>
-            </div>
+
 
         </div>
     );
