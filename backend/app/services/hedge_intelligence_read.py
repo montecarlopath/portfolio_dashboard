@@ -724,6 +724,19 @@ def get_hedge_intelligence_data(
         reasons=regime_resp.reasons,
         insights=insights,
 
+        factor_exposures=[
+            {
+                "factor": r.factor,
+                "gross_exposure_dollars": r.gross_exposure_dollars,
+                "exposure_pct": r.exposure_pct,
+                "threshold_pct": r.threshold_pct,
+                "excess_pct": r.excess_pct,
+                "hedge_proxy": r.hedge_proxy,
+            }
+            for r in factor_rows
+        ],
+        factor_budget_allocations=factor_budget_allocations,
+
         hedge_source_breakdown={
             "composer": composer_source,
             "alpaca": alpaca_summary,
