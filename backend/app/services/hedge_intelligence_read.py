@@ -23,7 +23,7 @@ Key changes from previous version:
   and remaining_hedge_budget_pct exactly as before.
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 
 from sqlalchemy.orm import Session
 
