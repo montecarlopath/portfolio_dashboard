@@ -770,7 +770,7 @@ class HedgePositionSnapshot(BaseModel):
     total_cost_basis: float = 0.0
     delta_dollars: float = 0.0
     hedge_bucket: Literal["primary", "tail", "other"] = "other"
-    structure_type: Literal["naked_put", "put_spread_leg", "tail_put", "other"] = "other"
+    structure_type: Literal["naked_put", "primary_spread", "tail_spread", "other"]
 
 
 class HedgeReconciliationAction(BaseModel):
