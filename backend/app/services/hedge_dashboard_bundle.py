@@ -157,6 +157,55 @@ def build_hedge_dashboard_bundle(
         vix_level=float(getattr(hedge, "vix_level", 20.0) or 20.0),
     )
 
+    hedge_dict = _to_dict(hedge)
+
+    theoretical_recommended_hedge_exposure_dollars = float(
+        hedge_dict.get("recommended_hedge_exposure_dollars", 0.0) or 0.0
+    )
+    theoretical_recommended_hedge_pct = float(
+        hedge_dict.get("recommended_hedge_pct", 0.0) or 0.0
+    )
+    theoretical_additional_hedge_exposure_dollars = float(
+        hedge_dict.get("additional_hedge_exposure_dollars", 0.0) or 0.0
+    )
+    theoretical_additional_hedge_pct = float(
+        hedge_dict.get("additional_hedge_pct", 0.0) or 0.0
+    )
+
+    practical_recommended_hedge_exposure_dollars = float(
+        _to_dict(plan).get("total_estimated_hedge_dollars", 0.0) or 0.0
+    )
+    practical_recommended_hedge_pct = (
+        practical_recommended_hedge_exposure_dollars / float(hedge.portfolio_value)
+        if float(hedge.portfolio_value or 0.0) > 0
+    else 0.0
+)
+    practical_additional_hedge_exposure_dollars = max(
+        practical_recommended_hedge_exposure_dollars - float(hedge.current_hedge_exposure_dollars or 0.0),
+        0.0,
+    )
+    practical_additional_hedge_pct = (
+        practical_additional_hedge_exposure_dollars / float(hedge.portfolio_value)
+        if float(hedge.portfolio_value or 0.0) > 0
+        else 0.0
+    )
+
+    hedge_dict["theoretical_recommended_hedge_exposure_dollars"] = theoretical_recommended_hedge_exposure_dollars
+    hedge_dict["theoretical_recommended_hedge_pct"] = theoretical_recommended_hedge_pct
+    hedge_dict["theoretical_additional_hedge_exposure_dollars"] = theoretical_additional_hedge_exposure_dollars
+    hedge_dict["theoretical_additional_hedge_pct"] = theoretical_additional_hedge_pct
+
+    hedge_dict["practical_recommended_hedge_exposure_dollars"] = practical_recommended_hedge_exposure_dollars
+    hedge_dict["practical_recommended_hedge_pct"] = practical_recommended_hedge_pct
+    hedge_dict["practical_additional_hedge_exposure_dollars"] = practical_additional_hedge_exposure_dollars
+    hedge_dict["practical_additional_hedge_pct"] = practical_additional_hedge_pct
+
+    # compatibility aliases
+    hedge_dict["recommended_hedge_exposure_dollars"] = practical_recommended_hedge_exposure_dollars
+    hedge_dict["recommended_hedge_pct"] = practical_recommended_hedge_pct
+    hedge_dict["additional_hedge_exposure_dollars"] = practical_additional_hedge_exposure_dollars
+    hedge_dict["additional_hedge_pct"] = practical_additional_hedge_pct
+
     reconcile = build_hedge_reconciliation_engine(
         db=db,
         account_ids=account_ids,
@@ -231,7 +280,7 @@ def build_hedge_dashboard_bundle(
             "market_risk_score": hedge.market_risk_score,
             "vix_level": getattr(hedge, "vix_level", None),
         },
-        "hedge_intelligence": _to_dict(hedge),
+        "hedge_intelligence": hedge_dict,
         "crash_sim": crash_sim,
         "select": _to_dict(select),
         "plan": _to_dict(plan),

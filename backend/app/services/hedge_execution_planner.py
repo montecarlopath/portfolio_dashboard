@@ -59,47 +59,22 @@ def _choose_contract_count(
     if target_hedge_dollars <= 0:
         return 0, ["Target hedge dollars are zero."]
 
-    rough_target = target_hedge_dollars / max_payoff_per_contract
+    contracts_by_target = max(
+        int(math.ceil(target_hedge_dollars / max_payoff_per_contract)),
+        0,
+    )
 
-    candidate_counts = set()
-    floor_n = max(int(math.floor(rough_target)), 0)
-    ceil_n = max(int(math.ceil(rough_target)), 0)
+    contracts = min(contracts_by_budget, contracts_by_target)
 
-    for n in [floor_n - 1, floor_n, floor_n + 1, ceil_n, ceil_n + 1, contracts_by_budget]:
-        if 0 <= n <= contracts_by_budget:
-            candidate_counts.add(n)
+    if contracts <= 0 and contracts_by_budget > 0:
+        contracts = 1
 
-    if 0 not in candidate_counts:
-        candidate_counts.add(0)
-
-    best_n = 0
-    best_score = None
-
-    for n in sorted(candidate_counts):
-        cost = n * debit_per_contract
-        coverage = n * max_payoff_per_contract
-
-        if cost > budget_dollars:
-            continue
-
-        shortfall = max(target_hedge_dollars - coverage, 0.0)
-        overshoot = max(coverage - target_hedge_dollars, 0.0)
-
-        score = (2.0 * shortfall) + (0.75 * overshoot) + (0.05 * cost)
-
-        if best_score is None or score < best_score:
-            best_score = score
-            best_n = n
-
-    if best_n == 0 and contracts_by_budget > 0:
-        best_n = 1
-
-    if best_n * max_payoff_per_contract < target_hedge_dollars:
-        notes.append("Budget does not fully cover target hedge; sized to best feasible contract count.")
-    elif best_n * max_payoff_per_contract > target_hedge_dollars * 1.10:
+    if contracts_by_budget < contracts_by_target:
+        notes.append("Budget does not fully cover target hedge; sized to budget-feasible contract count.")
+    elif contracts * max_payoff_per_contract > target_hedge_dollars * 1.10:
         notes.append("Discrete contract sizing slightly overfills target hedge.")
 
-    return best_n, notes
+    return contracts, notes
 
 
 def _plan_one_spread(

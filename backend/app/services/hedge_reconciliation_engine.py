@@ -101,11 +101,23 @@ def _extract_current_hedge_positions(
 
 
 def _estimate_bucket_contracts(positions: List[HedgePositionSnapshot], bucket: str) -> int:
-    total_qty = 0.0
+    long_qty = 0.0
+    short_qty = 0.0
+
     for p in positions:
-        if p.hedge_bucket == bucket:
-            total_qty += p.quantity
-    return int(round(total_qty))
+        if p.hedge_bucket != bucket:
+            continue
+
+        qty = float(p.quantity or 0.0)
+        if qty > 0:
+            long_qty += qty
+        elif qty < 0:
+            short_qty += abs(qty)
+
+    if long_qty > 0 and short_qty > 0:
+        return int(round(min(long_qty, short_qty)))
+
+    return int(round(max(long_qty, short_qty)))
 
 
 def _bucket_symbols(positions: List[HedgePositionSnapshot], bucket: str) -> List[str]:
@@ -326,7 +338,10 @@ def _decide_tail_action(
     current_exposure = _bucket_exposure_dollars(current_positions, "tail")
     gap = max(target_exposure_dollars - current_exposure, 0.0)
 
-    if current_contracts == 0 and target_contracts > 0:
+    has_tail_positions = len(current_symbols) > 0
+    has_tail_exposure = current_exposure > 0
+
+    if not has_tail_positions and not has_tail_exposure and target_contracts > 0:
         return HedgeReconciliationAction(
             bucket="tail",
             action="add_tail_spreads_now",
@@ -363,7 +378,7 @@ def _decide_tail_action(
     return HedgeReconciliationAction(
         bucket="tail",
         action="add_tail_spreads_now",
-        reason="Tail hedge sleeve is underbuilt relative to target exposure; add tail spreads now.",
+        reason="Tail hedge sleeve exists but is underbuilt relative to target exposure; add tail spreads now.",
         current_contracts_estimate=current_contracts,
         target_contracts=target_contracts,
         current_positions=current_symbols,
