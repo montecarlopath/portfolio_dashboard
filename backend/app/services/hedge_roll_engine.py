@@ -138,10 +138,11 @@ def build_hedge_roll_engine(
     additional_hedge_pct: float,
     remaining_hedge_budget_pct: float,
     vix_level: float = 20.0,
+    underlying_price: float | None = None,
 ) -> HedgeRollEngineResponse:
     plan = build_hedge_execution_plan(
         as_of_date=as_of_date,
-        underlying=underlying,
+        underlying_price=underlying_price,
         market_regime=market_regime,
         hedge_style=hedge_style,
         recommended_hedge_pct=recommended_hedge_pct,

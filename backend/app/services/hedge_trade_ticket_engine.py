@@ -365,6 +365,7 @@ def build_hedge_trade_tickets(
         recommended_hedge_pct=recommended_hedge_pct,
         additional_hedge_pct=additional_hedge_pct,
         remaining_hedge_budget_pct=remaining_hedge_budget_pct,
+        spot_price=underlying_price,
     )
 
     plan = build_hedge_execution_plan(
@@ -376,6 +377,7 @@ def build_hedge_trade_tickets(
         recommended_hedge_pct=recommended_hedge_pct,
         additional_hedge_pct=additional_hedge_pct,
         remaining_hedge_budget_pct=remaining_hedge_budget_pct,
+        underlying_price=underlying_price,
     )
 
     tickets: List[HedgeTradeTicket] = []
