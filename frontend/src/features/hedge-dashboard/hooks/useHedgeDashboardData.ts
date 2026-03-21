@@ -123,9 +123,9 @@ export function useHedgeDashboardBundle(accountId = "all") {
         queryKey: ["hedge-dashboard-bundle", accountId],
         queryFn: () => api.getHedgeDashboardBundle(accountId),
         staleTime: STALE_TIME,
-        refetchOnMount: "always",
+        refetchOnMount: false,
         refetchOnReconnect: true,
         refetchOnWindowFocus: false,
-        refetchInterval: 5 * 60_000,
+        refetchInterval: false,
     });
 }

@@ -352,8 +352,10 @@ def build_hedge_trade_tickets(
     remaining_hedge_budget_pct: float,
     vix_level: float | None = None,
     underlying_price: float | None = None,
+    prebuilt_plan=None,
+    prereconciled=None,
 ) -> HedgeTradeTicketResponse:
-    reconcile = build_hedge_reconciliation_engine(
+    reconcile = prereconciled or build_hedge_reconciliation_engine(
         db=db,
         account_ids=account_ids,
         as_of_date=as_of_date,
@@ -368,7 +370,7 @@ def build_hedge_trade_tickets(
         spot_price=underlying_price,
     )
 
-    plan = build_hedge_execution_plan(
+    plan = prebuilt_plan or build_hedge_execution_plan(
         as_of_date=as_of_date,
         underlying=underlying,
         market_regime=market_regime,

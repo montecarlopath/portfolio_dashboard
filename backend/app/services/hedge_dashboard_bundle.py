@@ -274,6 +274,7 @@ def build_hedge_dashboard_bundle(
         remaining_hedge_budget_pct=hedge.remaining_hedge_budget_pct,
         vix_level=float(getattr(hedge, "vix_level", 20.0) or 20.0),
         underlying_price=qqq_spot,
+        prebuilt_plan=plan,
     )
 
     tickets_preview = build_hedge_trade_tickets(
@@ -290,6 +291,8 @@ def build_hedge_dashboard_bundle(
         remaining_hedge_budget_pct=hedge.remaining_hedge_budget_pct,
         vix_level=float(getattr(hedge, "vix_level", 20.0) or 20.0),
         underlying_price=qqq_spot,
+        prebuilt_plan=plan,
+        prereconciled=reconcile,
     )
 
     crash_sim = _build_crash_sim_from_hedge_intel(
