@@ -351,6 +351,7 @@ def build_hedge_trade_tickets(
     additional_hedge_pct: float,
     remaining_hedge_budget_pct: float,
     vix_level: float | None = None,
+    underlying_price: float | None = None,
 ) -> HedgeTradeTicketResponse:
     reconcile = build_hedge_reconciliation_engine(
         db=db,
@@ -383,7 +384,8 @@ def build_hedge_trade_tickets(
     budget_remaining = total_budget_dollars
 
     # Current market inputs for Optimizer V1
-    underlying_price = get_latest_price(underlying) if underlying == "QQQ" else None
+    if underlying_price is None and underlying == "QQQ":
+        underlying_price = get_latest_price(underlying)
     vix_level = _safe_float(vix_level, 20.0)
     
     # 0) Existing primary hedge positions: optimizer decides keep / roll / replace

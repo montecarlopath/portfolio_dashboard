@@ -492,6 +492,7 @@ def build_hedge_reconciliation_engine(
     additional_hedge_pct: float,
     remaining_hedge_budget_pct: float,
     vix_level: float = 20.0,
+    spot_price: float | None = None,
 ) -> HedgeReconciliationResponse:
     holdings_resp = get_portfolio_holdings_data(
         db=db,
@@ -501,10 +502,12 @@ def build_hedge_reconciliation_engine(
     )
     holdings = _get_field(holdings_resp, "holdings", []) or []
 
-    qqq_spot = None
-    live_spot = get_latest_price("QQQ")
-    if live_spot is not None and live_spot > 0:
-        qqq_spot = float(live_spot)
+    qqq_spot = float(spot_price) if spot_price is not None and spot_price > 0 else None
+
+    if qqq_spot is None:
+        live_spot = get_latest_price("QQQ")
+        if live_spot is not None and live_spot > 0:
+            qqq_spot = float(live_spot)
 
     print("RECON qqq_spot =", qqq_spot)
 

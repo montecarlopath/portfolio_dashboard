@@ -641,9 +641,11 @@ def select_hedge_spreads(
     underlying: str = "QQQ",
     market_regime: MarketRegimeType,
     hedge_style: HedgeStyleType,
+    underlying_price: float | None = None,
 ) -> HedgeSpreadSelectionResponse:
     asof = date.fromisoformat(as_of_date)
-    underlying_price = get_latest_price(underlying)
+    if underlying_price is None and underlying == "QQQ":
+        underlying_price = get_latest_price(underlying)
 
     combined_dte_min = PRIMARY_DTE_RANGE[0]
     combined_dte_max = TAIL_DTE_RANGE[1]

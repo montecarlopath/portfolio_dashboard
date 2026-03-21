@@ -1339,3 +1339,22 @@ def clear_hedge_eod_alerts(
     """Clear resolved EOD alerts."""
     clear_eod_alerts(date=date)
     return {"cleared": True, "date": date}
+
+from app.services.hedge_dashboard_bundle import build_hedge_dashboard_bundle
+
+@router.get("/hedge/dashboard")
+def get_hedge_dashboard(
+    account_id: str = "all",
+    target_date: str | None = None,
+    hedge_style: HedgeStyleType | None = None,
+    scenarios: str | None = None,
+    db: Session = Depends(get_db),
+):
+    ids = resolve_account_ids(db, account_id)
+    return build_hedge_dashboard_bundle(
+        db=db,
+        account_ids=ids,
+        target_date=target_date,
+        hedge_style=hedge_style,
+        scenarios=scenarios,
+    )
