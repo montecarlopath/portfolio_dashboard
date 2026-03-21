@@ -10,10 +10,8 @@ from app.services.hedge_roll_engine import build_hedge_roll_engine
 from app.services.hedge_reconciliation_engine import build_hedge_reconciliation_engine
 from app.services.hedge_trade_ticket_engine import build_hedge_trade_tickets
 from app.services.hedge_history_read import get_hedge_history_data
-from app.services.hedge_order_history_read import get_hedge_order_history_data
-from app.services.hedge_eod_alerts import get_hedge_eod_alerts_data
 from app.services.finnhub_market_data import get_latest_price
-from app.services.crash_simulation import run_crash_simulation
+from app.services.crash_simulation_engine import run_crash_simulation
 
 
 def _auto_hedge_style(market_regime: str) -> str:
@@ -39,13 +37,26 @@ def _parse_scenarios_pct(scenarios: Optional[str]) -> Optional[list[float]]:
         return None
 
 
-def _build_crash_sim_from_hedge_intel(hedge_intel, scenarios_pct: Optional[list[float]] = None):
+def _to_dict(obj):
+    if obj is None:
+        return None
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    return obj
+
+
+def _build_crash_sim_from_hedge_intel(
+    hedge_intel,
+    scenarios_pct: Optional[list[float]] = None,
+):
     current_pct = max(float(hedge_intel.current_hedge_pct or 0.01), 0.01)
     recommended_pct = float(hedge_intel.recommended_hedge_pct or current_pct)
     scale = recommended_pct / current_pct
 
-    structural = hedge_intel.structural_hedge_exposure_dollars
-    options = hedge_intel.option_hedge_exposure_dollars
+    structural = float(hedge_intel.structural_hedge_exposure_dollars or 0.0)
+    options = float(hedge_intel.option_hedge_exposure_dollars or 0.0)
     fully_hedged_structural = structural * scale
     fully_hedged_options = options * scale
 
@@ -100,7 +111,7 @@ def _build_crash_sim_from_hedge_intel(hedge_intel, scenarios_pct: Optional[list[
         "fully_hedged_option_dollars": fully_hedged_options,
         "scenarios": _rows(sim_current),
         "scenarios_fully_hedged": _rows(sim_full),
-        "notes": sim_current.notes + [
+        "notes": list(getattr(sim_current, "notes", []) or []) + [
             f"scenarios_fully_hedged assumes hedge scaled from {current_pct*100:.1f}% to {recommended_pct*100:.1f}%"
         ],
     }
@@ -191,27 +202,21 @@ def build_hedge_dashboard_bundle(
         underlying_price=qqq_spot,
     )
 
-    crash_sim = _build_crash_sim_from_hedge_intel(hedge, scenarios_pct=scenarios_pct)
+    crash_sim = _build_crash_sim_from_hedge_intel(
+        hedge,
+        scenarios_pct=scenarios_pct,
+    )
 
     end_date = hedge.as_of_date
-    start_date = (datetime.fromisoformat(end_date) - timedelta(days=30)).date().isoformat()
+    start_date = (
+        datetime.fromisoformat(end_date) - timedelta(days=30)
+    ).date().isoformat()
 
     history_30d = get_hedge_history_data(
         db=db,
         account_ids=account_ids,
         start_date=start_date,
         end_date=end_date,
-    )
-
-    order_history = get_hedge_order_history_data(
-        db=db,
-        limit=20,
-    )
-
-    eod_alerts = get_hedge_eod_alerts_data(
-        db=db,
-        target_date=end_date,
-        account_ids=account_ids,
     )
 
     return {
@@ -226,14 +231,12 @@ def build_hedge_dashboard_bundle(
             "market_risk_score": hedge.market_risk_score,
             "vix_level": getattr(hedge, "vix_level", None),
         },
-        "hedge_intelligence": hedge.model_dump() if hasattr(hedge, "model_dump") else hedge.dict(),
+        "hedge_intelligence": _to_dict(hedge),
         "crash_sim": crash_sim,
-        "select": select.model_dump() if hasattr(select, "model_dump") else select.dict(),
-        "plan": plan.model_dump() if hasattr(plan, "model_dump") else plan.dict(),
-        "reconcile": reconcile.model_dump() if hasattr(reconcile, "model_dump") else reconcile.dict(),
-        "roll": roll.model_dump() if hasattr(roll, "model_dump") else roll.dict(),
-        "tickets_preview": tickets_preview.model_dump() if hasattr(tickets_preview, "model_dump") else tickets_preview.dict(),
-        "history_30d": history_30d.model_dump() if hasattr(history_30d, "model_dump") else history_30d.dict(),
-        "order_history": order_history.model_dump() if hasattr(order_history, "model_dump") else order_history.dict(),
-        "eod_alerts": eod_alerts.model_dump() if hasattr(eod_alerts, "model_dump") else eod_alerts.dict(),
+        "select": _to_dict(select),
+        "plan": _to_dict(plan),
+        "reconcile": _to_dict(reconcile),
+        "roll": _to_dict(roll),
+        "tickets_preview": _to_dict(tickets_preview),
+        "history_30d": _to_dict(history_30d),
     }
