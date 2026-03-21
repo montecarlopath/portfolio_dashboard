@@ -586,6 +586,9 @@ class HedgeIntelligenceResponse(BaseModel):
     unhedged_beta_estimate: float
     vix_level: float
 
+    factor_exposures: list[dict] = []
+    factor_budget_allocations: list[dict] = []
+
     hedge_budget_pct: float = Field(..., ge=0.0, le=1.0)
     hedge_budget_dollars: float
     remaining_hedge_budget_dollars: float
@@ -1342,3 +1345,8 @@ class CrashSimulationResponse(BaseModel):
     scenarios_fully_hedged: List[CrashScenarioRow]
 
     notes: List[str] = []
+
+class HedgeType:
+    PRIMARY_SPREAD = "primary_spread"
+    TAIL_SPREAD = "tail_spread"
+    RATIO_BACKSPREAD = "ratio_backspread"

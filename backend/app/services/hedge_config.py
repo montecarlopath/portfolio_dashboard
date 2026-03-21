@@ -74,12 +74,31 @@ HEDGE_BUDGET_PCT: dict[str, float] = {
 }
 
 
-# ── Profit-taking thresholds ──────────────────────────────────────────────────
-# If an option position has appreciated this much above cost basis → close 50%.
-PROFIT_TAKE_MULTIPLIER: float = 2.5    # 2.5× cost basis → take half off
+# ── Profit-taking thresholds by hedge type ───────────────────────────────────
 
-# If an option position has decayed to this fraction of cost basis AND DTE < 21 → let expire.
-DECAY_CLOSE_THRESHOLD: float = 0.30   # worth less than 30% of what you paid
+PROFIT_RULES = {
+    "primary_spread": {
+        "take_profit_1": 2.0,   # 2x cost basis -> take 50% off
+        "take_profit_2": 4.0,   # 4x cost basis -> take another 25-50%
+        "full_exit": 6.0,       # optional full monetization
+    },
+    "tail_spread": {
+        "take_profit_1": 3.0,
+        "take_profit_2": 6.0,
+        "full_exit": 10.0,
+    },
+    "ratio_backspread": {
+        "take_profit_1": 5.0,   # do not harvest too early
+        "take_profit_2": 10.0,
+        "full_exit": 20.0,
+    },
+}
+
+DECAY_RULES = {
+    "primary_spread": 0.30,     # if worth <30% of cost basis and near expiry
+    "tail_spread": 0.25,
+    "ratio_backspread": 0.15,   # let convexity live longer
+}
 
 # ── Structural hedge symbols ───────────────────────────────────────────────────
 # These positions have negative beta already factored into portfolio_beta.

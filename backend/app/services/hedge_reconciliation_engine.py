@@ -80,6 +80,7 @@ def _extract_current_hedge_positions(
         structure_type = classify_structure_type(
             bucket=bucket,
             option_type=parsed.option_type,
+            quantity=quantity,   # or signed_qty in alpaca file
         )
 
         out.append(

@@ -464,6 +464,68 @@ export default function EodReviewDashboard() {
                         practical target = {fmt$(intel.practical_recommended_hedge_exposure_dollars)}
                     </div>
                 </div>
+                {(intel.factor_exposures || []).length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                            Factor exposures
+                        </div>
+                        {(intel.factor_exposures || []).map((f, i) => (
+                            <div
+                                key={i}
+                                style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    padding: "4px 0",
+                                    borderBottom: "0.5px solid var(--color-border-tertiary)",
+                                    gap: 12,
+                                }}
+                            >
+                                <span style={{ fontSize: 12, color: "var(--color-text-primary)", minWidth: 80 }}>
+                                    {f.factor}
+                                </span>
+                                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>
+                                    {fmt$(f.gross_exposure_dollars)}
+                                </span>
+                                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>
+                                    {fmtPct(f.exposure_pct)}
+                                </span>
+                                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                                    hedge with {f.hedge_proxy || "—"}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {(intel.factor_budget_allocations || []).length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                            Factor hedge budget allocations
+                        </div>
+                        {(intel.factor_budget_allocations || []).map((f, i) => (
+                            <div
+                                key={i}
+                                style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    padding: "4px 0",
+                                    borderBottom: "0.5px solid var(--color-border-tertiary)",
+                                    gap: 12,
+                                }}
+                            >
+                                <span style={{ fontSize: 12, color: "var(--color-text-primary)", minWidth: 80 }}>
+                                    {f.factor}
+                                </span>
+                                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>
+                                    {fmt$(f.allocated_budget_dollars)}
+                                </span>
+                                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                                    proxy {f.hedge_proxy || "—"}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 {intel.insights?.length > 0 && (
                     <div style={{ marginTop: 8 }}>
@@ -507,14 +569,14 @@ export default function EodReviewDashboard() {
                     />
                     <Metric
                         label="Hedge efficiency"
-                        value={`${fmtN(intel.premium_hedge_efficiency, 1)}×`}
+                        value={`${fmtN(intel.premium_hedge_efficiency ?? 0, 1)}×`}
                         sub="protection per $ premium"
                         color="var(--color-text-success)"
                     />
                 </Grid>
                 <div style={{ marginTop: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
                     Full crash protection target: {fmtPct(intel.theoretical_recommended_hedge_pct)} ({fmt$(intel.theoretical_recommended_hedge_exposure_dollars)}) ·
-                    budgeted target: {fmtPct(intel.recommended_hedge_pct)} ({fmt$(intel.recommended_hedge_exposure_dollars)})
+                    budgeted target: {fmtPct(intel.practical_recommended_hedge_pct ?? intel.recommended_hedge_pct)} ({fmt$(intel.practical_recommended_hedge_exposure_dollars ?? intel.recommended_hedge_exposure_dollars)})
                 </div>
             </Card>
 

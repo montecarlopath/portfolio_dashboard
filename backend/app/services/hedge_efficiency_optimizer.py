@@ -37,8 +37,8 @@ from datetime import date
 from typing import Literal, Optional
 
 from app.services.hedge_config import (
-    PROFIT_TAKE_MULTIPLIER,
-    DECAY_CLOSE_THRESHOLD,
+    PROFIT_RULES,
+    DECAY_RULES,
 )
 
 
@@ -106,6 +106,7 @@ def evaluate_hedge_efficiency(
     total_cost_basis: Optional[float] = None,
     current_regime: Optional[str] = None,
     entry_regime: Optional[str] = None,   # regime when position was opened (optional)
+    structure_type: Optional[str] = None,
 ) -> HedgeEfficiencyResult:
     """
     Evaluate whether to keep, roll, replace, or close a hedge position.
@@ -114,6 +115,9 @@ def evaluate_hedge_efficiency(
     Falls through to score-based DTE + moneyness + vol logic if none fire.
     """
     reasons: list[str] = []
+    hedge_type = structure_type or "primary_spread"
+    profit_rules = PROFIT_RULES.get(hedge_type, PROFIT_RULES["primary_spread"])
+    decay_threshold = DECAY_RULES.get(hedge_type, DECAY_RULES["primary_spread"])
 
     if option_type != "P":
         return HedgeEfficiencyResult(
@@ -139,23 +143,57 @@ def evaluate_hedge_efficiency(
     # ── Trigger 1: Profit-take ────────────────────────────────────────────────
     # Position is worth more than PROFIT_TAKE_MULTIPLIER × what we paid.
     # Close 50% — capture most of the gain, keep remaining protection.
-    if value_multiple is not None and value_multiple >= PROFIT_TAKE_MULTIPLIER:
+    if value_multiple is not None:
         pnl_str = f"${pnl_dollars:,.0f}" if pnl_dollars is not None else "n/a"
-        return HedgeEfficiencyResult(
-            decision="close_profit_take",
-            score=99.0,   # high score = strong signal
-            dte=dte,
-            moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
-            reasons=[
-                f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
-                f"(threshold {PROFIT_TAKE_MULTIPLIER:.1f}×). P&L = {pnl_str}.",
-                "Recommend closing 50% of position to capture gains.",
-                "Keep remaining 50% as insurance — hedge scenario not yet resolved.",
-            ],
-            close_fraction=0.5,
-            pnl_dollars=pnl_dollars,
-            pnl_pct=pnl_pct,
-        )
+
+        if value_multiple >= profit_rules.get("full_exit", float("inf")):
+            return HedgeEfficiencyResult(
+                decision="close_profit_take",
+                score=99.0,
+                dte=dte,
+                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                reasons=[
+                    f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
+                    f"(full-exit threshold {profit_rules['full_exit']:.1f}×). P&L = {pnl_str}.",
+                    "Recommend closing 100% of position to harvest extreme convex gains.",
+                ],
+                close_fraction=1.0,
+                pnl_dollars=pnl_dollars,
+                pnl_pct=pnl_pct,
+            )
+
+        if value_multiple >= profit_rules.get("take_profit_2", float("inf")):
+            return HedgeEfficiencyResult(
+                decision="close_profit_take",
+                score=95.0,
+                dte=dte,
+                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                reasons=[
+                    f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
+                    f"(second threshold {profit_rules['take_profit_2']:.1f}×). P&L = {pnl_str}.",
+                    "Recommend closing 50% of remaining position.",
+                ],
+                close_fraction=0.5,
+                pnl_dollars=pnl_dollars,
+                pnl_pct=pnl_pct,
+            )
+
+        if value_multiple >= profit_rules.get("take_profit_1", float("inf")):
+            return HedgeEfficiencyResult(
+                decision="close_profit_take",
+                score=90.0,
+                dte=dte,
+                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                reasons=[
+                    f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
+                    f"(threshold {profit_rules['take_profit_1']:.1f}×). P&L = {pnl_str}.",
+                    "Recommend closing 50% of position to capture gains.",
+                    "Keep remaining protection in place while the hedge thesis is still active.",
+                ],
+                close_fraction=0.5,
+                pnl_dollars=pnl_dollars,
+                pnl_pct=pnl_pct,
+            )
 
     # ── Trigger 2: Regime improvement exit ────────────────────────────────────
     # Regime has improved (moved to lower risk) AND position has meaningful gains.
@@ -188,7 +226,7 @@ def evaluate_hedge_efficiency(
     # Not worth keeping — transaction costs exceed remaining value.
     if (
         value_multiple is not None
-        and value_multiple <= DECAY_CLOSE_THRESHOLD
+        and value_multiple <= decay_threshold
         and dte is not None
         and dte < 21
     ):
@@ -199,7 +237,7 @@ def evaluate_hedge_efficiency(
             moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
             reasons=[
                 f"Decay close trigger: position worth only {value_multiple:.0%} of cost basis "
-                f"(threshold {DECAY_CLOSE_THRESHOLD:.0%}) with {dte} DTE.",
+                f"(threshold {decay_threshold:.0%}) with {dte} DTE.",
                 "Let expire or close cheaply — remaining value below transaction cost threshold.",
             ],
             close_fraction=1.0,

@@ -49,9 +49,16 @@ from app.services.hedge_config import (
     STRUCTURAL_HEDGE_SYMBOLS,
 )
 
+from app.services.factor_exposure_engine import (
+    compute_factor_exposures,
+    allocate_factor_hedge_budget,
+)
+
 import logging
 
 logger = logging.getLogger(__name__)
+
+
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -614,6 +621,17 @@ def get_hedge_intelligence_data(
     hedge_budget_dollars = portfolio_value * hedge_budget_pct
     remaining_hedge_budget_dollars = max(hedge_budget_dollars - current_hedge_premium_cost, 0.0)
     remaining_hedge_budget_pct     = max(hedge_budget_pct - current_hedge_premium_cost_pct, 0.0)
+
+    # ── Factor exposures + budget splits ─────────────────────────────────────────
+    factor_rows = compute_factor_exposures(
+        positions=holdings,
+        portfolio_value=portfolio_value,
+    )
+
+    factor_budget_allocations = allocate_factor_hedge_budget(
+        factor_rows=factor_rows,
+        total_budget_dollars=remaining_hedge_budget_dollars,
+    )
 
     # ── Effectiveness metrics ─────────────────────────────────────────────────
     effectiveness = compute_hedge_effectiveness_metrics(

@@ -272,6 +272,7 @@ def load_alpaca_hedge_positions(
         structure_type = classify_structure_type(
             bucket=bucket,
             option_type=parsed.option_type,
+            quantity=signed_qty,
         )
 
         out.append(

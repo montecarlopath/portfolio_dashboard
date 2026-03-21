@@ -100,17 +100,23 @@ def classify_option_bucket(
     return "primary"
 
 
+
 def classify_structure_type(
     *,
     bucket: str,
     option_type: str,
+    quantity: Optional[float] = None,
 ) -> str:
     if str(option_type or "").upper() != "P":
         return "other"
 
+    qty = float(quantity or 0.0)
+
     if bucket == "primary":
-        return "naked_put"
+        # current primarys are mostly naked longs
+        return "primary_spread" if qty < 0 else "naked_put"
+
     if bucket == "tail":
-        return "tail_put"
+        return "tail_spread"
 
     return "other"

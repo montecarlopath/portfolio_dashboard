@@ -414,6 +414,7 @@ def build_hedge_trade_tickets(
             current_market_value=_safe_float(getattr(p, "market_value", None)),
             total_cost_basis=_safe_float(getattr(p, "total_cost_basis", None)),
             current_regime=market_regime,
+            structure_type=getattr(p, "structure_type", None),
         )
 
         if result.decision in ("close_profit_take", "close_regime_exit", "close_decay"):
