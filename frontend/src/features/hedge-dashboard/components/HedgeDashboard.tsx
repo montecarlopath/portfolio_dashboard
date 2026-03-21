@@ -141,6 +141,8 @@ function SectionHeader({ title, right }: { title: string; right?: React.ReactNod
     );
 }
 
+
+
 function LifecycleBadge({ state }: { state: string }) {
     const variants: Record<string, string> = {
         submitted: "bg-blue-500/15 text-blue-500 border-blue-500/30",

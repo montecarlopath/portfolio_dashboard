@@ -245,6 +245,10 @@ export default function EodReviewDashboard() {
     const refreshed = new Date().toLocaleTimeString();
 
     const intel = bundle?.hedge_intelligence || {};
+    const coverageRatio =
+        intel && intel.theoretical_recommended_hedge_pct > 0
+            ? intel.recommended_hedge_pct / intel.theoretical_recommended_hedge_pct
+            : 0;
     const recon = bundle?.reconcile || {};
     const plan = bundle?.plan || {};
     const sel = bundle?.select || {};
@@ -479,18 +483,39 @@ export default function EodReviewDashboard() {
                     </div>
                 )}
 
-                <Grid cols={2}>
-                    <Metric label="Premium cost basis" value={fmt$(intel.current_hedge_premium_cost_basis)} />
+                <Grid cols={2} style={{ marginTop: 8 }}>
+                    <Metric
+                        label="Premium cost basis"
+                        value={fmt$(intel.current_hedge_premium_cost_basis)}
+                    />
                     <Metric
                         label="Unrealized P&L"
                         value={fmt$(intel.hedge_unrealized_pnl)}
+                        color={intel.hedge_unrealized_pnl >= 0 ? "var(--color-text-success)" : "var(--color-text-danger)"}
+                    />
+                    <Metric
+                        label="Crash coverage"
+                        value={`${Math.round(coverageRatio * 100)}%`}
+                        sub="of full crash protection"
                         color={
-                            intel.hedge_unrealized_pnl >= 0
-                                ? "var(--color-text-success)"
-                                : "var(--color-text-danger)"
+                            coverageRatio < 0.1
+                                ? "var(--color-text-danger)"
+                                : coverageRatio < 0.25
+                                    ? "var(--color-text-warning)"
+                                    : "var(--color-text-success)"
                         }
                     />
+                    <Metric
+                        label="Hedge efficiency"
+                        value={`${fmtN(intel.premium_hedge_efficiency, 1)}×`}
+                        sub="protection per $ premium"
+                        color="var(--color-text-success)"
+                    />
                 </Grid>
+                <div style={{ marginTop: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Full crash protection target: {fmtPct(intel.theoretical_recommended_hedge_pct)} ({fmt$(intel.theoretical_recommended_hedge_exposure_dollars)}) ·
+                    budgeted target: {fmtPct(intel.recommended_hedge_pct)} ({fmt$(intel.recommended_hedge_exposure_dollars)})
+                </div>
             </Card>
 
             <Section title="Layer 3 — Option selection" />
