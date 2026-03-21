@@ -10,6 +10,7 @@ import type {
     HedgeOrderHistoryResponse,
     HedgeHistory,
     EodAlertsResponse,
+    HedgeDashboardBundle,
 } from "@/lib/api";
 
 const STALE_TIME = 60_000; // 1 min — hedge data doesn't need sub-second freshness
@@ -114,5 +115,17 @@ export function useEodAlerts(date?: string) {
         queryFn: () => api.getEodAlerts(d),
         staleTime: 60_000,
         refetchInterval: 60_000,
+    });
+}
+
+export function useHedgeDashboardBundle(accountId = "all") {
+    return useQuery<HedgeDashboardBundle>({
+        queryKey: ["hedge-dashboard-bundle", accountId],
+        queryFn: () => api.getHedgeDashboardBundle(accountId),
+        staleTime: STALE_TIME,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: false,
+        refetchInterval: 5 * 60_000,
     });
 }

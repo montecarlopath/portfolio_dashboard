@@ -97,7 +97,7 @@ def _decide_tail(
             reason="Tail hedge is nearing expiration; roll to preserve crash convexity.",
         )
 
-    if additional_hedge_pct > 0.02 and target_fill_pct < 0.85:
+    if target_fill_pct < 0.85:
         return HedgeRollDecision(
             action="add",
             structure_name="tail",

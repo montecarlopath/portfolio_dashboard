@@ -56,6 +56,29 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
   });
 }
 
+export interface HedgeDashboardBundle {
+  snapshot_id: string;
+  as_of_date: string;
+  context: {
+    account_ids: string[];
+    underlying: string;
+    hedge_style: string;
+    qqq_spot: number | null;
+    market_regime: string;
+    market_risk_score: number;
+    vix_level: number | null;
+  };
+  hedge_intelligence: HedgeIntelligence;
+  crash_sim: CrashSimResult;
+  select: Record<string, unknown>;
+  plan: Record<string, unknown>;
+  reconcile: Record<string, unknown>;
+  roll: Record<string, unknown>;
+  tickets_preview: Record<string, unknown>;
+  history_30d: HedgeHistory;
+}
+
+
 export interface Summary {
   portfolio_value: number;
   net_deposits: number;
@@ -592,6 +615,10 @@ export const api = {
     fetchJSON<Record<string, unknown>>(`/hedge/roll?account_id=${accountId}`),
   getHedgeTickets: (accountId = "all", mode = "preview") =>
     fetchJSON<Record<string, unknown>>(`/hedge/tickets?account_id=${accountId}&mode=${mode}`),
+  getHedgeDashboardBundle: (accountId = "all") =>
+    fetchJSON<HedgeDashboardBundle>(
+      `/hedge/dashboard?account_id=${encodeURIComponent(accountId)}`
+    ),
 };
 
 // ── Hedge interfaces ──────────────────────────────────────────────────────────
@@ -711,3 +738,5 @@ export interface EodAlertsResponse {
   alerts: EodAlert[];
   as_of: string;
 }
+
+
