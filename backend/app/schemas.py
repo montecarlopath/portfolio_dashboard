@@ -46,15 +46,6 @@ HedgeAssetType = Literal[
 
 
 
-class PortfolioBetaRow(BaseModel):
-    symbol: str
-    value: float
-    weight: float
-    beta: Optional[float] = None
-    beta_adjusted_exposure: float
-
-
-
 
 # --- Accounts ---
 class AccountInfo(BaseModel):
@@ -561,6 +552,13 @@ class HedgeIntelligenceResponse(BaseModel):
     recommended_hedge_exposure_dollars: float
     additional_hedge_exposure_dollars: float
 
+    # --- New: full vs practical hedge targets ---
+    theoretical_recommended_hedge_pct: float = Field(..., ge=0.0, le=1.0)
+    theoretical_recommended_hedge_exposure_dollars: float
+
+    practical_recommended_hedge_pct: float = Field(..., ge=0.0, le=1.0)
+    practical_recommended_hedge_exposure_dollars: float
+
     structural_hedge_exposure_dollars: float
     structural_hedge_exposure_pct: float = Field(..., ge=0.0, le=1.0)
     structural_hedge_capital_dollars: float
@@ -586,13 +584,17 @@ class HedgeIntelligenceResponse(BaseModel):
     unhedged_beta_estimate: float
     vix_level: float
 
-    factor_exposures: list[dict] = []
-    factor_budget_allocations: list[dict] = []
-
     hedge_budget_pct: float = Field(..., ge=0.0, le=1.0)
     hedge_budget_dollars: float
     remaining_hedge_budget_dollars: float
     remaining_hedge_budget_pct: float = Field(..., ge=0.0, le=1.0)
+
+    factor_exposures: list[dict] = []
+    factor_budget_allocations: list[dict] = []
+    convex_budget_dollars: float = 0.0
+    convex_budget_pct_of_hedge_budget: float = 0.0
+    convex_structures: List[str] = ["tail_spread", "ratio_backspread"]
+    factor_structure_allocations: list[dict] = []
 
     hedge_source_breakdown: HedgeSourceBreakdown
 
@@ -770,7 +772,13 @@ class HedgePositionSnapshot(BaseModel):
     total_cost_basis: float = 0.0
     delta_dollars: float = 0.0
     hedge_bucket: Literal["primary", "tail", "other"] = "other"
-    structure_type: Literal["naked_put", "primary_spread", "tail_spread", "other"]
+    structure_type: Literal[
+        "naked_put",
+        "primary_spread",
+        "tail_spread",
+        "ratio_backspread",
+        "other"
+    ]
 
 
 class HedgeReconciliationAction(BaseModel):
@@ -948,15 +956,6 @@ class BrokerOrderLeg(BaseModel):
     side: str
     ratio_qty: int
 
-
-
-
-
-
-class BrokerOrderLeg(BaseModel):
-    symbol: str
-    side: str
-    ratio_qty: int
 
 
 class BrokerValidationFlags(BaseModel):
@@ -1174,10 +1173,6 @@ class UnifiedHoldingsResponse(BaseModel):
     as_of_date: str | None = None
     rows: List[UnifiedHoldingRow]
     notes: List[str] = []
-
-
-from pydantic import BaseModel, Field
-from typing import List
 
 
 # ══════════════════════════════════════════════════════════════════════════════

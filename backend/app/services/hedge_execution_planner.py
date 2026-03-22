@@ -10,12 +10,7 @@ from app.schemas import (
 from app.services.option_selector import select_hedge_spreads
 
 
-HEDGE_STYLE_SPLIT_MAP = {
-    "balanced": {"primary": 0.70, "tail": 0.30},
-    "correction_focused": {"primary": 0.80, "tail": 0.20},
-    "crash_paranoid": {"primary": 0.55, "tail": 0.45},
-    "cost_sensitive": {"primary": 0.85, "tail": 0.15},
-}
+from app.config import HEDGE_STYLE_STRUCTURE_SPLIT_MAP
 
 
 def _get_mark(leg: OptionContractCandidate | None) -> float:
