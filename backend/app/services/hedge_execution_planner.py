@@ -9,8 +9,7 @@ from app.schemas import (
 )
 from app.services.option_selector import select_hedge_spreads
 
-
-
+# ✅ correct import (new system)
 from app.services.hedge_config import HEDGE_STYLE_STRUCTURE_SPLIT_MAP
 
 
@@ -165,6 +164,7 @@ def build_hedge_execution_plan(
     vix_level: float = 20.0,
     underlying_price: float | None = None,
 ) -> HedgeExecutionPlanResponse:
+
     spread_selection = select_hedge_spreads(
         as_of_date=as_of_date,
         underlying=underlying,
@@ -173,19 +173,23 @@ def build_hedge_execution_plan(
         underlying_price=underlying_price,
     )
 
-    style_split = HEDGE_STYLE_SPLIT_MAP.get(
+    # ✅ FIXED HERE (core bug)
+    style_split = HEDGE_STYLE_STRUCTURE_SPLIT_MAP.get(
         hedge_style,
-        {"primary": 0.70, "tail": 0.30},
+        HEDGE_STYLE_STRUCTURE_SPLIT_MAP["balanced"],
     )
+
+    primary_weight = float(style_split.get("primary", 0.60))
+    tail_weight = float(style_split.get("tail", 0.30))
 
     total_target_hedge_dollars = portfolio_value * recommended_hedge_pct
     total_budget_dollars = portfolio_value * remaining_hedge_budget_pct
 
-    primary_target = total_target_hedge_dollars * style_split["primary"]
-    tail_target = total_target_hedge_dollars * style_split["tail"]
+    primary_target = total_target_hedge_dollars * primary_weight
+    tail_target = total_target_hedge_dollars * tail_weight
 
-    primary_budget = total_budget_dollars * style_split["primary"]
-    tail_budget = total_budget_dollars * style_split["tail"]
+    primary_budget = total_budget_dollars * primary_weight
+    tail_budget = total_budget_dollars * tail_weight
 
     primary_plan = _plan_one_spread(
         spread=spread_selection.primary_spread,
