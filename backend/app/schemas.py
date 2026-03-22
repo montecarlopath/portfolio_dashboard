@@ -553,11 +553,11 @@ class HedgeIntelligenceResponse(BaseModel):
     additional_hedge_exposure_dollars: float
 
     # --- New: full vs practical hedge targets ---
-    theoretical_recommended_hedge_pct: float = Field(..., ge=0.0, le=1.0)
-    theoretical_recommended_hedge_exposure_dollars: float
 
-    practical_recommended_hedge_pct: float = Field(..., ge=0.0, le=1.0)
-    practical_recommended_hedge_exposure_dollars: float
+    theoretical_recommended_hedge_pct: float = 0.0
+    theoretical_recommended_hedge_exposure_dollars: float = 0.0
+    practical_recommended_hedge_pct: float = 0.0
+    practical_recommended_hedge_exposure_dollars: float = 0.0
 
     structural_hedge_exposure_dollars: float
     structural_hedge_exposure_pct: float = Field(..., ge=0.0, le=1.0)

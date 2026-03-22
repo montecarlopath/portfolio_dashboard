@@ -529,7 +529,9 @@ def get_hedge_intelligence_data(
         float(hedge_breakdown["option_hedge_exposure_dollars"])
         + float(alpaca_summary["option_hedge_exposure_dollars"])
     )
-    structural_hedge_exposure_dollars = float(hedge_breakdown["structural_hedge_exposure_dollars"])
+    structural_hedge_exposure_dollars = float(
+        hedge_breakdown["structural_hedge_exposure_dollars"]
+    )
     current_hedge_premium_market_value = (
         float(hedge_breakdown.get("current_hedge_premium_market_value", 0.0))
         + float(alpaca_summary["current_hedge_premium_market_value"])
@@ -547,8 +549,12 @@ def get_hedge_intelligence_data(
         option_hedge_exposure_dollars / portfolio_value if portfolio_value > 0 else 0.0
     )
     option_hedge_pct = current_hedge_pct
-    structural_hedge_pct = structural_hedge_exposure_dollars / portfolio_value if portfolio_value > 0 else 0.0
-    current_hedge_premium_cost_pct = current_hedge_premium_cost / portfolio_value if portfolio_value > 0 else 0.0
+    structural_hedge_pct = (
+        structural_hedge_exposure_dollars / portfolio_value if portfolio_value > 0 else 0.0
+    )
+    current_hedge_premium_cost_pct = (
+        current_hedge_premium_cost / portfolio_value if portfolio_value > 0 else 0.0
+    )
     premium_efficiency = (
         option_hedge_exposure_dollars / current_hedge_premium_cost
         if current_hedge_premium_cost > 0
@@ -573,7 +579,9 @@ def get_hedge_intelligence_data(
         protection_needed_dollars=total_protection_needed,
         option_hedge_exposure_dollars=option_hedge_exposure_dollars,
     )
-    additional_hedge_pct = option_gap_dollars / portfolio_value if portfolio_value > 0 else 0.0
+    additional_hedge_pct = (
+        option_gap_dollars / portfolio_value if portfolio_value > 0 else 0.0
+    )
     additional_hedge_pct = max(0.0, min(additional_hedge_pct, 1.0))
 
     recommended_hedge_exposure_dollars = total_protection_needed
@@ -615,12 +623,18 @@ def get_hedge_intelligence_data(
     # ── Budget guardrail ──────────────────────────────────────────────────────
     hedge_budget_pct = HEDGE_BUDGET_PCT.get(regime, 0.015)
     hedge_budget_dollars = portfolio_value * hedge_budget_pct
-    remaining_hedge_budget_dollars = max(hedge_budget_dollars - current_hedge_premium_cost, 0.0)
-    remaining_hedge_budget_pct = max(hedge_budget_pct - current_hedge_premium_cost_pct, 0.0)
+    remaining_hedge_budget_dollars = max(
+        hedge_budget_dollars - current_hedge_premium_cost, 0.0
+    )
+    remaining_hedge_budget_pct = max(
+        hedge_budget_pct - current_hedge_premium_cost_pct, 0.0
+    )
 
     # Reserve convex budget first
     convex_budget_pct_of_hedge_budget = CONVEX_ALLOCATION_BY_REGIME.get(regime, 0.0)
-    convex_budget_dollars = remaining_hedge_budget_dollars * convex_budget_pct_of_hedge_budget
+    convex_budget_dollars = (
+        remaining_hedge_budget_dollars * convex_budget_pct_of_hedge_budget
+    )
 
     # Dynamic factor exposures + allocations
     factor_rows = compute_factor_exposures(
@@ -629,7 +643,9 @@ def get_hedge_intelligence_data(
     )
     factor_budget_allocations = allocate_factor_hedge_budget(
         factor_rows=factor_rows,
-        total_budget_dollars=max(remaining_hedge_budget_dollars - convex_budget_dollars, 0.0),
+        total_budget_dollars=max(
+            remaining_hedge_budget_dollars - convex_budget_dollars, 0.0
+        ),
         regime=regime,
     )
     factor_structure_allocations = allocate_structure_budgets(
@@ -668,6 +684,19 @@ def get_hedge_intelligence_data(
         or str(target_date or "")
     )
 
+    # ── Theoretical vs practical targets ──────────────────────────────────────
+    # Temporary: keep them equal here. The bundle layer can later override
+    # practical values with budget-constrained plan outputs.
+    theoretical_recommended_hedge_exposure_dollars = (
+        recommended_hedge_exposure_dollars
+    )
+    theoretical_recommended_hedge_pct = recommended_hedge_pct
+
+    practical_recommended_hedge_exposure_dollars = (
+        recommended_hedge_exposure_dollars
+    )
+    practical_recommended_hedge_pct = recommended_hedge_pct
+
     return HedgeIntelligenceResponse(
         as_of_date=str(as_of_date or ""),
         benchmark="SPY",
@@ -695,10 +724,19 @@ def get_hedge_intelligence_data(
         recommended_hedge_exposure_dollars=recommended_hedge_exposure_dollars,
         additional_hedge_exposure_dollars=additional_hedge_exposure_dollars,
 
+        theoretical_recommended_hedge_exposure_dollars=theoretical_recommended_hedge_exposure_dollars,
+        theoretical_recommended_hedge_pct=theoretical_recommended_hedge_pct,
+        practical_recommended_hedge_exposure_dollars=practical_recommended_hedge_exposure_dollars,
+        practical_recommended_hedge_pct=practical_recommended_hedge_pct,
+
         structural_hedge_exposure_dollars=structural_hedge_exposure_dollars,
         structural_hedge_exposure_pct=structural_hedge_pct,
-        structural_hedge_capital_dollars=float(hedge_breakdown["structural_hedge_capital_dollars"]),
-        structural_hedge_efficiency=float(hedge_breakdown["structural_hedge_efficiency"]),
+        structural_hedge_capital_dollars=float(
+            hedge_breakdown["structural_hedge_capital_dollars"]
+        ),
+        structural_hedge_efficiency=float(
+            hedge_breakdown["structural_hedge_efficiency"]
+        ),
 
         option_hedge_exposure_dollars=option_hedge_exposure_dollars,
         option_hedge_exposure_pct=option_hedge_pct,
@@ -711,9 +749,15 @@ def get_hedge_intelligence_data(
         hedge_unrealized_pnl=float(effectiveness["hedge_unrealized_pnl"]),
         hedge_cost_drag_dollars=float(effectiveness["hedge_cost_drag_dollars"]),
         hedge_cost_drag_pct=float(effectiveness["hedge_cost_drag_pct"]),
-        hedge_protection_capacity_dollars=float(effectiveness["hedge_protection_capacity_dollars"]),
-        hedge_protection_capacity_pct=float(effectiveness["hedge_protection_capacity_pct"]),
-        hedge_marked_benefit_dollars=float(effectiveness["hedge_marked_benefit_dollars"]),
+        hedge_protection_capacity_dollars=float(
+            effectiveness["hedge_protection_capacity_dollars"]
+        ),
+        hedge_protection_capacity_pct=float(
+            effectiveness["hedge_protection_capacity_pct"]
+        ),
+        hedge_marked_benefit_dollars=float(
+            effectiveness["hedge_marked_benefit_dollars"]
+        ),
         hedge_marked_benefit_pct=float(effectiveness["hedge_marked_benefit_pct"]),
         hedge_capacity_ratio=float(effectiveness["hedge_capacity_ratio"]),
         hedged_beta_estimate=float(effectiveness["hedged_beta_estimate"]),
@@ -730,6 +774,7 @@ def get_hedge_intelligence_data(
 
         convex_budget_dollars=convex_budget_dollars,
         convex_budget_pct_of_hedge_budget=convex_budget_pct_of_hedge_budget,
+
         factor_exposures=[
             {
                 "factor": r.factor,
@@ -742,7 +787,7 @@ def get_hedge_intelligence_data(
             for r in factor_rows
         ],
         factor_budget_allocations=factor_budget_allocations,
-        factor_structure_allocations = factor_structure_allocations,
+        factor_structure_allocations=factor_structure_allocations,
 
         hedge_source_breakdown={
             "composer": composer_source,
