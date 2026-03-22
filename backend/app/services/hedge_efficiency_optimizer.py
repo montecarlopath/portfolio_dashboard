@@ -1,38 +1,20 @@
 from __future__ import annotations
 
 """
-hedge_efficiency_optimizer.py  (Phase 6 Step 3 update)
+hedge_efficiency_optimizer.py
 
-Added profit-take and hedge exit triggers on top of the existing
-DTE + moneyness + vol scoring.
+Evaluates whether an existing hedge position should be kept, rolled, replaced,
+or partially/fully closed.
 
-New triggers (checked BEFORE the score-based logic):
-
-  Trigger 1 — Profit-take:
-    position worth > PROFIT_TAKE_MULTIPLIER × cost_basis (default 2.5×)
-    → decision = "close_profit_take", close 50% recommended
-    → reason includes actual P&L and multiplier
-
-  Trigger 2 — Regime improvement exit:
-    regime has improved since position was opened AND
-    position has appreciated > REGIME_EXIT_MIN_GAIN_PCT (default 50%)
-    → decision = "close_regime_exit", regime no longer warrants this hedge
-    → only fires if regime is now better (lower risk) than when put was opened
-
-  Trigger 3 — Decay close:
-    position worth < DECAY_CLOSE_THRESHOLD × cost_basis (default 30%)
-    AND DTE < 21
-    → decision = "close_decay", let expire or close cheaply
-    → transaction costs exceed remaining value
-
-  Trigger 4 — Efficiency decay (existing, kept):
-    DTE < 14 AND moneyness < 0.95
-    → score penalty, may become "replace"
-
-All constants come from hedge_config.py and can be changed without code edits.
+Order of checks:
+1) Profit-take triggers
+2) Regime improvement exit
+3) Vol-spike harvest
+4) Decay close
+5) Fallback score-based keep / roll / replace logic
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Optional
 
@@ -41,17 +23,16 @@ from app.services.hedge_config import (
     DECAY_RULES,
 )
 
-
 OptimizerDecision = Literal[
     "keep",
     "roll",
     "replace",
-    "close_profit_take",   # NEW — take profit, position >2.5× cost
-    "close_regime_exit",   # NEW — regime improved, position has gains
-    "close_decay",         # NEW — decayed below 30% of cost, DTE < 21
+    "close_profit_take",
+    "close_regime_exit",
+    "close_decay",
 ]
 
-# Regime risk ordering — lower index = lower risk = better market
+# Lower index = lower risk / better market
 REGIME_RISK_ORDER = [
     "strong_bull",
     "extended_bull",
@@ -69,7 +50,7 @@ class HedgeEfficiencyResult:
     dte: Optional[int]
     moneyness: Optional[float]
     reasons: list[str]
-    close_fraction: float = 1.0   # how much to close (1.0 = all, 0.5 = half)
+    close_fraction: float = 1.0
     pnl_dollars: Optional[float] = None
     pnl_pct: Optional[float] = None
 
@@ -84,7 +65,6 @@ def _safe_dte(as_of_date: str, expiry: Optional[str]) -> Optional[int]:
 
 
 def _regime_risk_rank(regime: Optional[str]) -> int:
-    """Lower rank = lower risk (better market). Unknown = middle."""
     if not regime:
         return 3
     try:
@@ -101,23 +81,24 @@ def evaluate_hedge_efficiency(
     option_type: Optional[str],
     underlying_price: Optional[float],
     vix_level: Optional[float],
-    # NEW — profit-take and regime-exit inputs
     current_market_value: Optional[float] = None,
     total_cost_basis: Optional[float] = None,
     current_regime: Optional[str] = None,
-    entry_regime: Optional[str] = None,   # regime when position was opened (optional)
+    entry_regime: Optional[str] = None,
     structure_type: Optional[str] = None,
 ) -> HedgeEfficiencyResult:
     """
     Evaluate whether to keep, roll, replace, or close a hedge position.
-
-    Checks profit-take, regime exit, and decay triggers FIRST.
-    Falls through to score-based DTE + moneyness + vol logic if none fire.
     """
     reasons: list[str] = []
+
     hedge_type = structure_type or "primary_spread"
     profit_rules = PROFIT_RULES.get(hedge_type, PROFIT_RULES["primary_spread"])
-    decay_threshold = DECAY_RULES.get(hedge_type, DECAY_RULES["primary_spread"])
+    decay_rules = DECAY_RULES.get(hedge_type, DECAY_RULES["primary_spread"])
+
+    decay_threshold = decay_rules.get("threshold", 0.30)
+    decay_dte_trigger = decay_rules.get("dte_trigger", 21)
+    vol_spike_exit = profit_rules.get("vol_spike_exit")
 
     if option_type != "P":
         return HedgeEfficiencyResult(
@@ -130,19 +111,20 @@ def evaluate_hedge_efficiency(
 
     dte = _safe_dte(as_of_date, expiry)
 
-    # ── Compute P&L if we have cost data ─────────────────────────────────────
     pnl_dollars: Optional[float] = None
     pnl_pct: Optional[float] = None
     value_multiple: Optional[float] = None
 
-    if current_market_value is not None and total_cost_basis is not None and total_cost_basis > 0:
+    if (
+        current_market_value is not None
+        and total_cost_basis is not None
+        and total_cost_basis > 0
+    ):
         pnl_dollars = current_market_value - total_cost_basis
         pnl_pct = pnl_dollars / total_cost_basis
         value_multiple = current_market_value / total_cost_basis
 
-    # ── Trigger 1: Profit-take ────────────────────────────────────────────────
-    # Position is worth more than PROFIT_TAKE_MULTIPLIER × what we paid.
-    # Close 50% — capture most of the gain, keep remaining protection.
+    # 1) Profit-taking
     if value_multiple is not None:
         pnl_str = f"${pnl_dollars:,.0f}" if pnl_dollars is not None else "n/a"
 
@@ -151,7 +133,11 @@ def evaluate_hedge_efficiency(
                 decision="close_profit_take",
                 score=99.0,
                 dte=dte,
-                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                moneyness=(
+                    strike / underlying_price
+                    if (strike and underlying_price and underlying_price > 0)
+                    else None
+                ),
                 reasons=[
                     f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
                     f"(full-exit threshold {profit_rules['full_exit']:.1f}×). P&L = {pnl_str}.",
@@ -167,7 +153,11 @@ def evaluate_hedge_efficiency(
                 decision="close_profit_take",
                 score=95.0,
                 dte=dte,
-                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                moneyness=(
+                    strike / underlying_price
+                    if (strike and underlying_price and underlying_price > 0)
+                    else None
+                ),
                 reasons=[
                     f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
                     f"(second threshold {profit_rules['take_profit_2']:.1f}×). P&L = {pnl_str}.",
@@ -183,7 +173,11 @@ def evaluate_hedge_efficiency(
                 decision="close_profit_take",
                 score=90.0,
                 dte=dte,
-                moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+                moneyness=(
+                    strike / underlying_price
+                    if (strike and underlying_price and underlying_price > 0)
+                    else None
+                ),
                 reasons=[
                     f"Profit-take trigger: position is worth {value_multiple:.1f}× cost basis "
                     f"(threshold {profit_rules['take_profit_1']:.1f}×). P&L = {pnl_str}.",
@@ -195,10 +189,9 @@ def evaluate_hedge_efficiency(
                 pnl_pct=pnl_pct,
             )
 
-    # ── Trigger 2: Regime improvement exit ────────────────────────────────────
-    # Regime has improved (moved to lower risk) AND position has meaningful gains.
-    # The risk we were hedging against has reduced — lock in the premium value.
-    MIN_GAIN_FOR_REGIME_EXIT = 0.50   # position must be up at least 50% to trigger
+    # 2) Regime improvement exit
+    MIN_GAIN_FOR_REGIME_EXIT = 0.50
+
     if (
         current_regime is not None
         and entry_regime is not None
@@ -210,7 +203,11 @@ def evaluate_hedge_efficiency(
             decision="close_regime_exit",
             score=80.0,
             dte=dte,
-            moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+            moneyness=(
+                strike / underlying_price
+                if (strike and underlying_price and underlying_price > 0)
+                else None
+            ),
             reasons=[
                 f"Regime has improved from {entry_regime} → {current_regime}.",
                 f"Position up {pnl_pct:.0%} — lock in gains now that risk has reduced.",
@@ -221,20 +218,49 @@ def evaluate_hedge_efficiency(
             pnl_pct=pnl_pct,
         )
 
-    # ── Trigger 3: Decay close ────────────────────────────────────────────────
-    # Position has lost most of its value AND is near expiry.
-    # Not worth keeping — transaction costs exceed remaining value.
+    # 3) Vol-spike harvest
+    if (
+        vol_spike_exit is not None
+        and vix_level is not None
+        and pnl_dollars is not None
+        and pnl_dollars > 0
+        and vix_level >= vol_spike_exit
+    ):
+        return HedgeEfficiencyResult(
+            decision="close_profit_take",
+            score=92.0,
+            dte=dte,
+            moneyness=(
+                strike / underlying_price
+                if (strike and underlying_price and underlying_price > 0)
+                else None
+            ),
+            reasons=[
+                f"Vol spike exit: VIX at {vix_level:.1f} exceeds {vol_spike_exit:.1f}.",
+                "Position is profitable and implied volatility is elevated.",
+                "Recommend harvesting part of the hedge while pricing is rich.",
+            ],
+            close_fraction=0.5,
+            pnl_dollars=pnl_dollars,
+            pnl_pct=pnl_pct,
+        )
+
+    # 4) Decay close
     if (
         value_multiple is not None
         and value_multiple <= decay_threshold
         and dte is not None
-        and dte < 21
+        and dte < decay_dte_trigger
     ):
         return HedgeEfficiencyResult(
             decision="close_decay",
             score=-99.0,
             dte=dte,
-            moneyness=strike / underlying_price if (strike and underlying_price and underlying_price > 0) else None,
+            moneyness=(
+                strike / underlying_price
+                if (strike and underlying_price and underlying_price > 0)
+                else None
+            ),
             reasons=[
                 f"Decay close trigger: position worth only {value_multiple:.0%} of cost basis "
                 f"(threshold {decay_threshold:.0%}) with {dte} DTE.",
@@ -245,7 +271,7 @@ def evaluate_hedge_efficiency(
             pnl_pct=pnl_pct,
         )
 
-    # ── Score-based logic (existing — unchanged) ──────────────────────────────
+    # 5) Score-based fallback logic
     if strike is None or underlying_price is None or underlying_price <= 0:
         return HedgeEfficiencyResult(
             decision="replace",
@@ -261,7 +287,7 @@ def evaluate_hedge_efficiency(
     vix = float(vix_level or 20.0)
     score = 0.0
 
-    # 1) DTE component
+    # DTE component
     if dte is None:
         reasons.append("DTE unavailable.")
     elif dte > 45:
@@ -277,7 +303,7 @@ def evaluate_hedge_efficiency(
         score -= 2.5
         reasons.append(f"DTE is very short at {dte} days.")
 
-    # 2) Moneyness component
+    # Moneyness component
     if moneyness >= 1.00:
         score += 2.0
         reasons.append(f"Put is ITM/ATM-like with strike ratio {moneyness:.2f}.")
@@ -286,23 +312,29 @@ def evaluate_hedge_efficiency(
         reasons.append(f"Put is near-ATM with strike ratio {moneyness:.2f}.")
     elif 0.88 <= moneyness < 0.95:
         score += 0.75
-        reasons.append(f"Put is still relevant OTM protection with strike ratio {moneyness:.2f}.")
+        reasons.append(
+            f"Put is still relevant OTM protection with strike ratio {moneyness:.2f}."
+        )
     else:
         score -= 1.5
         reasons.append(f"Put is far OTM with strike ratio {moneyness:.2f}.")
 
-    # 3) Vol regime component
+    # Vol regime component
     if vix >= 28:
         score += 1.25
-        reasons.append(f"Vol regime is elevated (VIX {vix:.1f}); keeping existing hedge is favored.")
+        reasons.append(
+            f"Vol regime is elevated (VIX {vix:.1f}); keeping existing hedge is favored."
+        )
     elif 20 <= vix < 28:
         score += 0.5
         reasons.append(f"Vol regime is moderate (VIX {vix:.1f}).")
     else:
         score -= 0.5
-        reasons.append(f"Vol regime is subdued (VIX {vix:.1f}); replacing can be more attractive.")
+        reasons.append(
+            f"Vol regime is subdued (VIX {vix:.1f}); replacing can be more attractive."
+        )
 
-    # 4) Carry / decay heuristic
+    # Carry / decay heuristic
     if dte is not None and dte < 14 and moneyness < 0.95:
         score -= 1.5
         reasons.append("Short-dated and OTM: carry efficiency is deteriorating.")
@@ -313,11 +345,9 @@ def evaluate_hedge_efficiency(
         score += 0.25
         reasons.append("Carry profile is still acceptable.")
 
-    # Add P&L context to reasons if available
     if value_multiple is not None:
         reasons.append(f"Current value is {value_multiple:.1f}× cost basis.")
 
-    # Decision bands
     if score >= 2.5:
         decision: OptimizerDecision = "keep"
     elif score >= 0.5:
