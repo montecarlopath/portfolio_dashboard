@@ -10,7 +10,8 @@ from app.schemas import (
 from app.services.option_selector import select_hedge_spreads
 
 
-from app.config import HEDGE_STYLE_STRUCTURE_SPLIT_MAP
+
+from app.services.hedge_config import HEDGE_STYLE_STRUCTURE_SPLIT_MAP
 
 
 def _get_mark(leg: OptionContractCandidate | None) -> float:
