@@ -226,3 +226,36 @@ def allocate_factor_hedge_budget(
         )
 
     return sorted(allocations, key=lambda x: x["allocated_budget_dollars"], reverse=True)
+
+
+def compute_unmapped_exposures(
+    *,
+    positions: list[Any],
+    portfolio_value: float,
+) -> list[dict]:
+    symbol_to_factor = _build_symbol_to_factor_map()
+    rows: list[dict] = []
+
+    for p in positions:
+        symbol = _extract_symbol(p)
+        if not symbol:
+            continue
+
+        if symbol in symbol_to_factor:
+            continue
+
+        market_value = _extract_market_value(p)
+        if market_value <= 0:
+            continue
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "gross_exposure_dollars": market_value,
+                "exposure_pct": market_value / portfolio_value if portfolio_value > 0 else 0.0,
+                "suggested_action": "add_factor_mapping",
+            }
+        )
+
+    rows.sort(key=lambda x: x["gross_exposure_dollars"], reverse=True)
+    return rows

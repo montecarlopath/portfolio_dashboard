@@ -5,7 +5,10 @@ from typing import Optional
 
 from app.services.hedge_intelligence_read import get_hedge_intelligence_data
 from app.services.option_selector import select_hedge_spreads
+
 from app.services.hedge_execution_planner import build_hedge_execution_plan
+from app.services.hedge_execution_planner_v2 import build_factor_aware_hedge_execution_plan
+
 from app.services.hedge_roll_engine import build_hedge_roll_engine
 from app.services.hedge_reconciliation_engine import build_hedge_reconciliation_engine
 from app.services.hedge_trade_ticket_engine import build_hedge_trade_tickets
@@ -183,6 +186,16 @@ def build_hedge_dashboard_bundle(
     )
 
     hedge_dict = _to_dict(hedge)
+    factor_plan = build_factor_aware_hedge_execution_plan(
+        as_of_date=hedge.as_of_date,
+        market_regime=hedge.market_regime,
+        hedge_style=resolved_hedge_style,
+        portfolio_value=hedge.portfolio_value,
+        factor_structure_allocations=hedge_dict.get("factor_structure_allocations", []),
+        vix_level=float(getattr(hedge, "vix_level", 20.0) or 20.0),
+    )
+    factor_plan_dict = _to_dict(factor_plan)
+
     plan_dict = _to_dict(plan)
 
     theoretical_recommended_hedge_exposure_dollars = float(
@@ -199,7 +212,7 @@ def build_hedge_dashboard_bundle(
     )
 
     practical_recommended_hedge_exposure_dollars = float(
-        plan_dict.get("total_estimated_hedge_dollars", 0.0) or 0.0
+        factor_plan_dict.get("total_estimated_hedge_dollars", 0.0) or 0.0
     )
     practical_recommended_hedge_pct = (
         practical_recommended_hedge_exposure_dollars / float(hedge.portfolio_value)
@@ -328,6 +341,7 @@ def build_hedge_dashboard_bundle(
         "crash_sim": crash_sim,
         "select": _to_dict(select),
         "plan": plan_dict,
+        "factor_plan": factor_plan_dict,
         "reconcile": _to_dict(reconcile),
         "roll": _to_dict(roll),
         "tickets_preview": _to_dict(tickets_preview),

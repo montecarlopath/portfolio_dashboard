@@ -10,6 +10,8 @@ from app.services.hedge_intelligence_read import get_hedge_intelligence_data
 from app.services.market_signal_read import get_market_regime_signals
 
 
+
+
 def _daterange(start_date: date, end_date: date):
     cur = start_date
     while cur <= end_date:

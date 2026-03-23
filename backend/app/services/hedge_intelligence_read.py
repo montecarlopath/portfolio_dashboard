@@ -21,7 +21,7 @@ Key changes from previous version:
   5. Dynamic factor-aware hedge budgeting:
      - compute factor exposures from actual holdings
      - reserve convex budget by regime
-     - allocate remaining hedge budget only across factors actually present
+     - allocate available hedge premium budget now only across factors actually present
 """
 
 from typing import Any, List, Optional
@@ -56,6 +56,12 @@ from app.services.factor_exposure_engine import (
 )
 
 from app.services.hedge_budget_allocator import allocate_structure_budgets
+
+from app.services.factor_exposure_engine import (
+    compute_factor_exposures,
+    allocate_factor_hedge_budget,
+    compute_unmapped_exposures,
+)
 
 import logging
 
@@ -641,6 +647,16 @@ def get_hedge_intelligence_data(
         positions=holdings,
         portfolio_value=portfolio_value,
     )
+    unmapped_exposures = compute_unmapped_exposures(
+        positions=holdings,
+        portfolio_value=portfolio_value,
+    )
+    unmapped_exposure_dollars = sum(
+        float(x.get("gross_exposure_dollars", 0.0) or 0.0)
+        for x in unmapped_exposures
+    )
+
+
     factor_budget_allocations = allocate_factor_hedge_budget(
         factor_rows=factor_rows,
         total_budget_dollars=max(
@@ -788,6 +804,9 @@ def get_hedge_intelligence_data(
         ],
         factor_budget_allocations=factor_budget_allocations,
         factor_structure_allocations=factor_structure_allocations,
+
+        unmapped_exposures=unmapped_exposures,
+        unmapped_exposure_dollars=unmapped_exposure_dollars,
 
         hedge_source_breakdown={
             "composer": composer_source,

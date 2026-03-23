@@ -598,6 +598,10 @@ class HedgeIntelligenceResponse(BaseModel):
 
     hedge_source_breakdown: HedgeSourceBreakdown
 
+    unmapped_exposures: list[dict] = Field(default_factory=list)
+    unmapped_exposure_dollars: float = 0.0
+
+
     reasons: List[str]
     insights: List[str]
 
@@ -1345,3 +1349,22 @@ class HedgeType:
     PRIMARY_SPREAD = "primary_spread"
     TAIL_SPREAD = "tail_spread"
     RATIO_BACKSPREAD = "ratio_backspread"
+
+class HedgeFactorStructurePlan(BaseModel):
+    factor: str
+    underlying: str
+    primary_spread: HedgeStructurePlan
+    tail_spread: HedgeStructurePlan
+    convex_budget_dollars: float = 0.0
+
+
+class HedgeExecutionPlanV2Response(BaseModel):
+    as_of_date: str
+    benchmark: str = "SPY"
+    hedge_style: str
+    market_regime: str
+    factor_plans: List[HedgeFactorStructurePlan] = Field(default_factory=list)
+    total_estimated_cost_dollars: float = 0.0
+    total_estimated_cost_pct: float = 0.0
+    total_estimated_hedge_dollars: float = 0.0
+    total_estimated_hedge_pct: float = 0.0
