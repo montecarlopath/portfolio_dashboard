@@ -21,6 +21,8 @@ class FactorExposureRow:
     threshold_pct: float
     excess_pct: float
     hedge_proxy: str | None
+    routing_action: str = "dedicated"
+    routing_reason: str = ""
 
 
 def _extract_symbol(position: Any) -> str | None:
@@ -82,6 +84,43 @@ def _build_symbol_to_factor_map() -> dict[str, str]:
     return out
 
 
+def _get_cash_like_symbols() -> set[str]:
+    """
+    Symbols that should be ignored for factor budgeting and unmapped warnings.
+
+    Typical examples:
+    - treasury / cash parking ETFs
+    - box-spread style carry sleeves
+    """
+    cash_like = FACTOR_ALLOCATION_SETTINGS.get("cash_like_symbols", []) or []
+    return {str(x).upper() for x in cash_like}
+
+
+def _build_residual_beta_row(
+    *,
+    source_rows: list[FactorExposureRow],
+    portfolio_value: float,
+    residual_factor_name: str,
+    residual_hedge_proxy: str,
+) -> FactorExposureRow | None:
+    residual_gross = sum(r.gross_exposure_dollars for r in source_rows)
+    if residual_gross <= 0:
+        return None
+
+    residual_exposure_pct = residual_gross / portfolio_value if portfolio_value > 0 else 0.0
+
+    return FactorExposureRow(
+        factor=residual_factor_name,
+        gross_exposure_dollars=residual_gross,
+        exposure_pct=residual_exposure_pct,
+        threshold_pct=0.0,
+        excess_pct=residual_exposure_pct,
+        hedge_proxy=residual_hedge_proxy,
+        routing_action="aggregated_to_beta",
+        routing_reason="aggregated sub-threshold factor exposures",
+    )
+
+
 def compute_factor_exposures(
     *,
     positions: list[Any],
@@ -90,16 +129,25 @@ def compute_factor_exposures(
     """
     Scan holdings and compute gross factor exposures.
 
-    Only factors actually present in holdings will appear.
-    Factors below their configured minimum threshold are still shown here,
-    but their excess_pct will be zero and they will not receive budget.
+    Routing logic:
+    1) cash-like symbols are ignored entirely
+    2) mapped factors above threshold remain dedicated hedge factors
+    3) mapped factors below threshold are aggregated into residual_beta
+    4) only positive long exposure counts toward hedge budgeting
+
+    This prevents many small factors from being dropped and silently left unhedged.
     """
     symbol_to_factor = _build_symbol_to_factor_map()
+    cash_like_symbols = _get_cash_like_symbols()
+
     factor_totals: dict[str, float] = {}
 
     for p in positions:
         symbol = _extract_symbol(p)
         if not symbol:
+            continue
+
+        if symbol in cash_like_symbols:
             continue
 
         factor = symbol_to_factor.get(symbol)
@@ -114,26 +162,53 @@ def compute_factor_exposures(
 
         factor_totals[factor] = factor_totals.get(factor, 0.0) + market_value
 
-    rows: list[FactorExposureRow] = []
+    dedicated_rows: list[FactorExposureRow] = []
+    residual_source_rows: list[FactorExposureRow] = []
+
+    residual_factor_name = str(
+        FACTOR_ALLOCATION_SETTINGS.get("residual_beta_factor_name", "residual_beta")
+    )
+    residual_hedge_proxy = str(
+        FACTOR_ALLOCATION_SETTINGS.get("residual_beta_hedge_proxy", "QQQ")
+    )
 
     for factor, gross_dollars in factor_totals.items():
         exposure_pct = gross_dollars / portfolio_value if portfolio_value > 0 else 0.0
-        threshold_pct = FACTOR_MIN_EXPOSURE_PCT.get(factor, 1.0)
-        excess_pct = max(exposure_pct - threshold_pct, 0.0)
+        threshold_pct = float(FACTOR_MIN_EXPOSURE_PCT.get(factor, 1.0) or 1.0)
         hedge_proxy = FACTOR_HEDGE_PROXIES.get(factor)
 
-        rows.append(
-            FactorExposureRow(
-                factor=factor,
-                gross_exposure_dollars=gross_dollars,
-                exposure_pct=exposure_pct,
-                threshold_pct=threshold_pct,
-                excess_pct=excess_pct,
-                hedge_proxy=hedge_proxy,
-            )
+        row = FactorExposureRow(
+            factor=factor,
+            gross_exposure_dollars=gross_dollars,
+            exposure_pct=exposure_pct,
+            threshold_pct=threshold_pct,
+            excess_pct=max(exposure_pct - threshold_pct, 0.0),
+            hedge_proxy=hedge_proxy,
         )
 
-    return sorted(rows, key=lambda r: r.gross_exposure_dollars, reverse=True)
+        if exposure_pct >= threshold_pct:
+            row.routing_action = "dedicated"
+            row.routing_reason = "factor exposure exceeds dedicated hedge threshold"
+            dedicated_rows.append(row)
+        else:
+            row.routing_action = "aggregated_to_beta"
+            row.routing_reason = "factor exposure below dedicated hedge threshold"
+            residual_source_rows.append(row)
+
+    residual_row = _build_residual_beta_row(
+        source_rows=residual_source_rows,
+        portfolio_value=portfolio_value,
+        residual_factor_name=residual_factor_name,
+        residual_hedge_proxy=residual_hedge_proxy,
+    )
+
+    final_rows = sorted(
+        dedicated_rows + ([residual_row] if residual_row else []),
+        key=lambda r: r.gross_exposure_dollars,
+        reverse=True,
+    )
+
+    return final_rows
 
 
 def allocate_factor_hedge_budget(
@@ -146,13 +221,13 @@ def allocate_factor_hedge_budget(
     Allocate hedge budget dynamically across factors that are ACTUALLY present.
 
     Logic:
-    1) Ignore factors below min exposure threshold (excess_pct <= 0)
-    2) Weight eligible factors by:
+    1) dedicated factors above threshold receive direct budget
+    2) residual_beta bucket receives budget for aggregated small-factor risk
+    3) weighting uses:
          excess exposure
          x factor priority
          x regime multiplier
-    3) Allocate total budget across those eligible factors
-    4) If no factor qualifies and config says so, route all budget to core factor
+    4) if nothing qualifies and config says so, route all budget to core factor
     """
     if total_budget_dollars <= 0:
         return []
@@ -172,21 +247,24 @@ def allocate_factor_hedge_budget(
     weighted_rows: list[tuple[FactorExposureRow, float]] = []
 
     for row in factor_rows:
-        if row.excess_pct <= 0:
+        # dedicated factors use excess_pct
+        # residual_beta uses full exposure_pct because it intentionally captures
+        # aggregated sub-threshold exposures
+        base_exposure = row.excess_pct if row.factor != "residual_beta" else row.exposure_pct
+
+        if base_exposure <= 0:
             continue
 
         priority = float(FACTOR_BUDGET_PRIORITY.get(row.factor, 1.0) or 1.0)
         regime_mult = float(regime_multiplier_map.get(row.factor, 1.0) or 1.0)
 
-        # Weighted score determines budget share.
-        weight = row.excess_pct * priority * regime_mult
+        weight = base_exposure * priority * regime_mult
 
         if weight > 0:
             weighted_rows.append((row, weight))
 
     total_weight = sum(weight for _, weight in weighted_rows)
 
-    # If no factor qualified, optionally route all budget to core factor IF core exists.
     if total_weight <= 0:
         if reserve_unassigned_to_core:
             core_row = next((r for r in factor_rows if r.factor == core_factor), None)
@@ -199,8 +277,14 @@ def allocate_factor_hedge_budget(
                         "exposure_pct": core_row.exposure_pct,
                         "threshold_pct": core_row.threshold_pct,
                         "excess_pct": core_row.excess_pct,
-                        "priority_weight": float(FACTOR_BUDGET_PRIORITY.get(core_row.factor, 1.0) or 1.0),
-                        "regime_multiplier": float(regime_multiplier_map.get(core_row.factor, 1.0) or 1.0),
+                        "routing_action": core_row.routing_action,
+                        "routing_reason": core_row.routing_reason,
+                        "priority_weight": float(
+                            FACTOR_BUDGET_PRIORITY.get(core_row.factor, 1.0) or 1.0
+                        ),
+                        "regime_multiplier": float(
+                            regime_multiplier_map.get(core_row.factor, 1.0) or 1.0
+                        ),
                         "allocated_budget_dollars": total_budget_dollars,
                     }
                 ]
@@ -219,13 +303,23 @@ def allocate_factor_hedge_budget(
                 "exposure_pct": row.exposure_pct,
                 "threshold_pct": row.threshold_pct,
                 "excess_pct": row.excess_pct,
-                "priority_weight": float(FACTOR_BUDGET_PRIORITY.get(row.factor, 1.0) or 1.0),
-                "regime_multiplier": float(regime_multiplier_map.get(row.factor, 1.0) or 1.0),
+                "routing_action": row.routing_action,
+                "routing_reason": row.routing_reason,
+                "priority_weight": float(
+                    FACTOR_BUDGET_PRIORITY.get(row.factor, 1.0) or 1.0
+                ),
+                "regime_multiplier": float(
+                    regime_multiplier_map.get(row.factor, 1.0) or 1.0
+                ),
                 "allocated_budget_dollars": budget,
             }
         )
 
-    return sorted(allocations, key=lambda x: x["allocated_budget_dollars"], reverse=True)
+    return sorted(
+        allocations,
+        key=lambda x: x["allocated_budget_dollars"],
+        reverse=True,
+    )
 
 
 def compute_unmapped_exposures(
@@ -233,12 +327,24 @@ def compute_unmapped_exposures(
     positions: list[Any],
     portfolio_value: float,
 ) -> list[dict]:
+    """
+    Surface long positions that:
+    - are not cash-like
+    - are not mapped to any factor
+
+    This is for config maintenance / explainability, not direct hedge budgeting.
+    """
     symbol_to_factor = _build_symbol_to_factor_map()
+    cash_like_symbols = _get_cash_like_symbols()
+
     rows: list[dict] = []
 
     for p in positions:
         symbol = _extract_symbol(p)
         if not symbol:
+            continue
+
+        if symbol in cash_like_symbols:
             continue
 
         if symbol in symbol_to_factor:
@@ -253,7 +359,7 @@ def compute_unmapped_exposures(
                 "symbol": symbol,
                 "gross_exposure_dollars": market_value,
                 "exposure_pct": market_value / portfolio_value if portfolio_value > 0 else 0.0,
-                "suggested_action": "add_factor_mapping",
+                "suggested_action": "add_factor_mapping_or_route_to_residual_beta",
             }
         )
 

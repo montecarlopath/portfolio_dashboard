@@ -256,6 +256,7 @@ STRUCTURAL_HEDGE_SYMBOLS: frozenset[str] = frozenset({
     "EDZ",
     "SH",
     "TMF",
+    "VIXY"
 })
 
 
@@ -294,12 +295,10 @@ CONVEX_ALLOCATION_BY_REGIME: dict[str, float] = {
 # =============================================================================
 FACTOR_HEDGE_PROXIES: dict[str, str] = {
     "tech": "QQQ",
-    "broad_equity": "SPY",
     "btc": "IBIT",
     "gold": "GLD",
-    "semis": "SOXX",
-    "small_caps": "IWM",
-    "bonds": "TLT",
+    "energy": "XLE",
+    "residual_beta": "QQQ",
 }
 
 
@@ -339,12 +338,6 @@ FACTOR_SYMBOL_MAP: dict[str, set[str]] = {
         "AMZN",
         "META",
         "GOOGL",
-    },
-
-    # -------------------------------------------------------------------------
-    # SEMICONDUCTORS
-    # -------------------------------------------------------------------------
-    "semis": {
         "SOXL",
         "SOXX",
         "SMH",
@@ -353,6 +346,18 @@ FACTOR_SYMBOL_MAP: dict[str, set[str]] = {
         "AVGO",
         "TSM",
         "MU",
+        "PSQ",
+        "SQQQ",
+        "SOXS",
+        "UVXY",
+        "VIXM",
+        "EUM",
+        "EDZ",
+        "SH",
+        "VIXY"
+        "EDC"
+
+
     },
 
     # -------------------------------------------------------------------------
@@ -395,22 +400,17 @@ FACTOR_SYMBOL_MAP: dict[str, set[str]] = {
     },
 
     # -------------------------------------------------------------------------
-    # SMALL CAPS
+    # ENERGY
     # -------------------------------------------------------------------------
-    "small_caps": {
-        "IWM",
-        "TNA",
-        "SRTY",
-    },
-
-    # -------------------------------------------------------------------------
-    # BONDS / DURATION
-    # -------------------------------------------------------------------------
-    "bonds": {
-        "TLT",
-        "TMF",
-        "TMV",
-        "IEF",
+    "energy": {
+        "XLE",
+        "ERX",
+        "UCO",
+        "FRO",
+        "XOP",
+        "OIH",
+        "XEG",
+        "VDE",
     },
 }
 
@@ -426,12 +426,10 @@ FACTOR_SYMBOL_MAP: dict[str, set[str]] = {
 #   dedicated hedge budget.
 # =============================================================================
 FACTOR_MIN_EXPOSURE_PCT: dict[str, float] = {
+    "tech": 0.08,
     "btc": 0.03,
     "gold": 0.03,
-    "semis": 0.05,
-    "tech": 0.08,
-    "small_caps": 0.05,
-    "bonds": 0.05,
+    "energy": 0.05,
 }
 
 
@@ -447,12 +445,11 @@ FACTOR_MIN_EXPOSURE_PCT: dict[str, float] = {
 # This only affects factors that are actually present and above threshold.
 # =============================================================================
 FACTOR_BUDGET_PRIORITY: dict[str, float] = {
+    "tech": 1.00,
     "btc": 1.25,
     "gold": 0.90,
-    "semis": 1.10,
-    "tech": 1.00,
-    "small_caps": 0.90,
-    "bonds": 0.75,
+    "energy": 0.90,
+    "residual_beta": 1.00,
 }
 
 
@@ -476,49 +473,43 @@ FACTOR_REGIME_MULTIPLIERS: dict[str, dict[str, float]] = {
         "btc": 0.8,
         "gold": 0.6,
         "tech": 1.0,
-        "semis": 1.0,
-        "small_caps": 1.0,
-        "bonds": 0.8,
+        "energy": 1.0,
+        "residual_beta": 1.0,
     },
     "extended_bull": {
         "btc": 1.1,
         "gold": 0.7,
         "tech": 1.0,
-        "semis": 1.0,
-        "small_caps": 1.0,
-        "bonds": 0.8,
+        "energy": 1.0,
+        "residual_beta": 1.0,
     },
     "neutral": {
         "btc": 1.0,
         "gold": 1.0,
         "tech": 1.0,
-        "semis": 1.0,
-        "small_caps": 1.0,
-        "bonds": 1.0,
+        "energy": 1.0,
+        "residual_beta": 1.0,
     },
     "early_breakdown": {
         "btc": 0.9,
         "gold": 1.2,
         "tech": 1.1,
-        "semis": 1.1,
-        "small_caps": 1.0,
-        "bonds": 1.1,
+        "energy": 1.1,
+        "residual_beta": 1.0,
     },
     "high_crash_risk": {
         "btc": 0.7,
         "gold": 1.3,
         "tech": 1.15,
-        "semis": 1.15,
-        "small_caps": 1.0,
-        "bonds": 1.2,
+        "energy": 1.15,
+        "residual_beta": 1.0,
     },
     "localized_bubble": {
         "btc": 1.2,
         "gold": 0.9,
         "tech": 1.0,
-        "semis": 1.1,
-        "small_caps": 1.0,
-        "bonds": 0.9,
+        "energy": 1.1,
+        "residual_beta": 1.0,
     },
 }
 
@@ -539,9 +530,15 @@ FACTOR_REGIME_MULTIPLIERS: dict[str, dict[str, float]] = {
 #   the core factor rather than leaving it idle.
 # =============================================================================
 FACTOR_ALLOCATION_SETTINGS = {
-    "core_factor": "tech",
+    # existing keys...
     "min_total_factor_budget_dollars": 500.0,
     "reserve_unassigned_budget_to_core": True,
+    "core_factor": "tech",
+
+    # new keys
+    "cash_like_symbols": ["BIL", "BOXX","TBIL","SGOV"],
+    "residual_beta_factor_name": "residual_beta",
+    "residual_beta_hedge_proxy": "QQQ",
 }
 
 

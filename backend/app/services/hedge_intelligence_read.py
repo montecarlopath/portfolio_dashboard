@@ -799,6 +799,8 @@ def get_hedge_intelligence_data(
                 "threshold_pct": r.threshold_pct,
                 "excess_pct": r.excess_pct,
                 "hedge_proxy": r.hedge_proxy,
+                "routing_action": r.routing_action,
+                "routing_reason": r.routing_reason,
             }
             for r in factor_rows
         ],
